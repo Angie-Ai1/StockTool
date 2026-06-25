@@ -1,6 +1,6 @@
 # 開發進度總覽 — LINE 股市零股記帳小工具
 
-> 最後更新:2026-06-25 10:17
+> 最後更新:2026-06-25 14:07
 
 ## 整體狀態快照
 
@@ -10,9 +10,9 @@
 | 規格設計(Phase 2~8) | 約 70% | 功能範圍已定,部分細節(手續費折數規則等)待展開 |
 | 程式碼實作 | 進行中 | Phase 0 本機可建置部分已完成(Poetry / Dockerfile / docker-compose / `.env.example`);應用程式邏輯(`app/services` 等)尚未開始 |
 | 測試覆蓋 | 0% | 測試框架(pytest)已就位,尚無實際測試案例 |
-| 部署上線 | 0% | 尚未建立任何雲端資源(GCP 專案、LINE Channel、Render 服務) |
+| 部署上線 | 0% | 尚未建立任何雲端資源(GCP 專案、LINE Channel、Cloud Run 服務) |
 
-**目前卡在**:Phase 0 中需要使用者本人帳號操作的雲端服務申請(GCP / LINE / Render / 外部 Cron)尚待使用者執行,Claude 無法代為登入第三方主控台完成。
+**目前卡在**:Phase 0 中需要使用者本人帳號操作的雲端服務申請(GCP 專案/LINE/Cloud Run/Cloud Scheduler)尚待使用者執行,Claude 無法代為登入第三方主控台完成。
 
 ---
 
@@ -36,13 +36,13 @@
 - [ ] 建立 Google Cloud 專案
 - [ ] 啟用 Sheets API + Drive API
 - [ ] 設定 OAuth 同意畫面(Google Auth Platform):⚠️ 已更正為 **In production + 不送驗證**(取代原計畫的測試模式,原因見 `openspecs/DE.md` 2026-06-25 09:59 區塊——測試模式會讓 refresh token 每 7 天強制失效)
-- [ ] 產生並設定加密金鑰(如 `cryptography.fernet` key),存於 Render 環境變數,**不寫入程式碼/不進版控**
+- [ ] 產生並設定加密金鑰(如 `cryptography.fernet` key),存於 Cloud Run 環境變數,**不寫入程式碼/不進版控**
 - [ ] 申請 LINE 官方帳號 + 啟用 Messaging API Channel,取得 Channel Secret / Access Token
 - [ ] 設定 LINE Rich Menu 雛形(供 Phase 1 查詢/說明按鈕使用)
 - [ ] 建立 Google Cloud Firestore(Native mode,`asia-southeast1`)+ 建立 Service Account 金鑰
 - [ ] (選用)Firestore 帳單硬上限保險:預算 → Pub/Sub → Cloud Function 自動關閉 Billing,程式碼已備好於 `Instruction/billing-killswitch/`,步驟見 `cloud_setting.md` 第 4.3 節
-- [ ] 建立 Render 服務(免費方案,**選 Singapore 機房**降低台灣延遲),確認當下實際免費額度規則(運行時數上限、LINE push 月配額)(部署平台決策見 ADR-020)
-- [ ] 設定外部 Cron(如 cron-job.org),每 10 分鐘呼叫 `/tick`,**時區指定 Asia/Taipei**
+- [ ] 建立 Cloud Run 服務(Continuously deploy from a repository,**選 asia-southeast1(Singapore)** 降低台灣延遲,min instances 設 0、Allow unauthenticated invocations)(部署平台決策見 ADR-021,已取代 ADR-020 的 Render 方案)
+- [ ] 設定 Cloud Scheduler,每 10 分鐘呼叫 `/tick`,**時區指定 Asia/Taipei**
 
 ---
 
@@ -187,6 +187,6 @@
 
 ## 下次可從哪裡接續
 
-0. 本機這批 Phase 0 變更已 commit(`e5db12c`),但 `git push origin main` 在這個沙箱環境失敗(沒有 GitHub 認證)。需要使用者自己在已登入 GitHub 的終端機/IDE 執行 `git push origin main`。
-1. **使用者本人**依 `Instruction/cloud_setting.md` 完成 Phase 0 剩下唯一的區塊:雲端帳號設定(GCP 專案、OAuth 同意畫面、LINE Channel、Firestore、Render 服務、外部 Cron,選用的 Firestore 帳單硬上限保險)。本機開發環境(Poetry/Docker)已全部驗證完成。
+0. 本機這批 Phase 0 變更已 commit(`e5db12c`),`git push origin main` 已由使用者本機完成推送。
+1. **使用者本人**依 `Instruction/cloud_setting.md` 完成 Phase 0 剩下唯一的區塊:雲端帳號設定(GCP 專案、OAuth 同意畫面、LINE Channel、Firestore、Cloud Run 服務、Cloud Scheduler,選用的 Firestore 帳單硬上限保險)。部署平台已改為 Cloud Run + Cloud Scheduler(ADR-021,取代 ADR-020 的 Render 方案),`cloud_setting.md` 第 6、10、11 節已同步改寫。本機開發環境(Poetry/Docker)已全部驗證完成,`Dockerfile` 已改成讀取 `$PORT` 環境變數以相容 Cloud Run。
 2. Phase 0 雲端帳號到位後接續 **Phase 1**,建議依架構文件的模組順序實作:先 `parser.py` + `pnl_engine.py`(純邏輯、易單元測試)→ `oauth_service.py` + `sheets_client.py` → `line_webhook.py` 串接 → `tick.py` 排程 → `liff.py`。
