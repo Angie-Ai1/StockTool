@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     line_channel_secret: str = ""
     line_channel_access_token: str = ""
+    line_login_channel_id: str = ""
 
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""

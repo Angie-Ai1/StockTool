@@ -99,3 +99,30 @@ class ResyncResult(BaseModel):
     """sheets_client.resync() 的回傳值,供 LINE 查詢/LIFF/排程任務直接使用,不另外持久化 — 規格 1.6"""
 
     accounts: list[AccountResyncResult] = []
+
+
+class PositionSummary(BaseModel):
+    """LIFF 網頁顯示用的單一持股摘要,補上 resync 沒有的股票名稱/目前收盤價/未實現損益 — 規格 1.11、7.2"""
+
+    stock_code: str
+    stock_name: str
+    quantity: Decimal
+    avg_cost: Decimal
+    realized_pnl: Decimal
+    closing_price: Decimal | None = None
+    unrealized_pnl: Decimal | None = None
+
+
+class AccountSummary(BaseModel):
+    """LIFF 網頁顯示用的單一帳戶(分頁)摘要 — 規格 1.11"""
+
+    tab_name: str
+    positions: list[PositionSummary] = []
+
+
+class LiffSummaryResponse(BaseModel):
+    """`GET /liff/summary` 回應 — 規格 1.11:登入連結狀態、目前庫存列表、簡單損益顯示"""
+
+    linked: bool
+    status: FriendStatus | None = None
+    accounts: list[AccountSummary] = []
