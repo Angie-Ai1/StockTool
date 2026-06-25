@@ -237,3 +237,110 @@ def resync(
     update_account_tabs_cache(friend.line_user_id, registered_tabs, firestore_client=firestore_client)
 
     return ResyncResult(accounts=accounts)
+
+
+def read_tab_positions(
+    friend: FriendRecord,
+    tab_name: str,
+    stock_list: list[StockQuote],
+    *,
+    credentials_builder=build_credentials_from_encrypted_refresh_token,
+    refresher=refresh_or_raise,
+    sheets_service_builder=lambda credentials: build(
+        "sheets", "v4", credentials=credentials, cache_discovery=False
+    ),
+    firestore_client=None,
+) -> dict[str, Position]:
+    """讀取一個帳戶分頁目前的庫存(純讀取,不寫回試算表)——供記帳前的賣超防呆用"""
+    credentials = credentials_builder(friend.encrypted_refresh_token)
+    try:
+        refresher(credentials)
+    except OAuthInvalidGrantError:
+        mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
+        raise
+
+    service = sheets_service_builder(credentials)
+    try:
+        response = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=friend.spreadsheet_id, range=f"'{tab_name}'")
+            .execute()
+        )
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
+        raise
+
+    rows = response.get("values", [])
+    if not rows:
+        return {}
+    header_index = map_header_columns(rows[0])
+    if header_index is None:
+        return {}
+    positions, _ = resync_account_tab(rows[1:], header_index, stock_list)
+    return positions
+
+
+def append_transaction_row(
+    friend: FriendRecord,
+    tab_name: str,
+    txn: TransactionRow,
+    *,
+    credentials_builder=build_credentials_from_encrypted_refresh_token,
+    refresher=refresh_or_raise,
+    sheets_service_builder=lambda credentials: build(
+        "sheets", "v4", credentials=credentials, cache_discovery=False
+    ),
+    firestore_client=None,
+) -> None:
+    """把一筆新交易追加到指定帳戶分頁的下一列——規格 1.2 記帳寫入流程"""
+    credentials = credentials_builder(friend.encrypted_refresh_token)
+    try:
+        refresher(credentials)
+    except OAuthInvalidGrantError:
+        mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
+        raise
+
+    service = sheets_service_builder(credentials)
+    try:
+        header_response = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=friend.spreadsheet_id, range=f"'{tab_name}'!1:1")
+            .execute()
+        )
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
+        raise
+
+    header_rows = header_response.get("values", [])
+    if not header_rows:
+        raise ValueError(f"找不到帳戶分頁「{tab_name}」")
+    header_index = map_header_columns(header_rows[0])
+    if header_index is None:
+        raise ValueError(f"「{tab_name}」標題列結構不符規格")
+
+    num_cols = len(header_rows[0])
+    new_row = [""] * num_cols
+    field_values = {
+        "row_uuid": txn.row_uuid,
+        "日期": str(txn.date),
+        "動作": txn.action.value,
+        "股票代碼/名稱": txn.stock_query,
+        "數量": str(txn.quantity) if txn.quantity is not None else "",
+        "金額": str(txn.amount) if txn.amount is not None else "",
+        "狀態": txn.status,
+    }
+    for col_name, col_idx in header_index.items():
+        if col_name in field_values and col_idx < num_cols:
+            new_row[col_idx] = field_values[col_name]
+
+    service.spreadsheets().values().append(
+        spreadsheetId=friend.spreadsheet_id,
+        range=f"'{tab_name}'!A1",
+        valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS",
+        body={"values": [new_row]},
+    ).execute()

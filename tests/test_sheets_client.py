@@ -3,7 +3,7 @@ from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
-from app.models.schemas import FriendRecord, Position, StockQuote
+from app.models.schemas import FriendRecord, Position, StockQuote, TransactionAction, TransactionRow
 from app.services import sheets_client
 from app.services.oauth_service import OAuthInvalidGrantError
 
@@ -264,6 +264,186 @@ def test_resync_marks_needs_reauth_and_reraises_on_spreadsheet_not_found(monkeyp
         sheets_client.resync(
             _fake_friend(),
             STOCK_LIST,
+            credentials_builder=lambda enc: MagicMock(),
+            refresher=MagicMock(),
+            sheets_service_builder=lambda credentials: fake_service,
+            firestore_client=MagicMock(),
+        )
+
+    mark_needs_reauth.assert_called_once_with("U123456", firestore_client=ANY)
+
+
+# --- read_tab_positions -----------------------------------------------------------
+
+
+def test_read_tab_positions_returns_positions_from_sheet():
+    fake_service = MagicMock()
+    fake_service.spreadsheets.return_value.values.return_value.get.return_value.execute.return_value = {
+        "values": [HEADER_ROW, _row(action="買", stock="2330", quantity="10", amount="6000")]
+    }
+
+    positions = sheets_client.read_tab_positions(
+        _fake_friend(),
+        "個人帳",
+        STOCK_LIST,
+        credentials_builder=lambda enc: MagicMock(),
+        refresher=MagicMock(),
+        sheets_service_builder=lambda credentials: fake_service,
+    )
+
+    assert "2330" in positions
+    assert positions["2330"].quantity == Decimal("10")
+    fake_service.spreadsheets.return_value.values.return_value.get.assert_called_once_with(
+        spreadsheetId="sheet-1", range="'個人帳'"
+    )
+
+
+def test_read_tab_positions_returns_empty_on_empty_sheet():
+    fake_service = MagicMock()
+    fake_service.spreadsheets.return_value.values.return_value.get.return_value.execute.return_value = {
+        "values": []
+    }
+
+    positions = sheets_client.read_tab_positions(
+        _fake_friend(),
+        "個人帳",
+        STOCK_LIST,
+        credentials_builder=lambda enc: MagicMock(),
+        refresher=MagicMock(),
+        sheets_service_builder=lambda credentials: fake_service,
+    )
+
+    assert positions == {}
+
+
+def test_read_tab_positions_marks_needs_reauth_on_oauth_failure(monkeypatch):
+    mark_needs_reauth = MagicMock()
+    monkeypatch.setattr(sheets_client, "mark_needs_reauth", mark_needs_reauth)
+
+    with pytest.raises(OAuthInvalidGrantError):
+        sheets_client.read_tab_positions(
+            _fake_friend(),
+            "個人帳",
+            STOCK_LIST,
+            credentials_builder=lambda enc: MagicMock(),
+            refresher=lambda creds: (_ for _ in ()).throw(OAuthInvalidGrantError("boom")),
+            sheets_service_builder=MagicMock(),
+            firestore_client=MagicMock(),
+        )
+
+    mark_needs_reauth.assert_called_once_with("U123456", firestore_client=ANY)
+
+
+def test_read_tab_positions_marks_needs_reauth_on_404(monkeypatch):
+    from googleapiclient.errors import HttpError
+
+    class _FakeResp:
+        status = 404
+        reason = "Not Found"
+
+    mark_needs_reauth = MagicMock()
+    monkeypatch.setattr(sheets_client, "mark_needs_reauth", mark_needs_reauth)
+
+    fake_service = MagicMock()
+    fake_service.spreadsheets.return_value.values.return_value.get.return_value.execute.side_effect = (
+        HttpError(_FakeResp(), b"{}")
+    )
+
+    with pytest.raises(HttpError):
+        sheets_client.read_tab_positions(
+            _fake_friend(),
+            "個人帳",
+            STOCK_LIST,
+            credentials_builder=lambda enc: MagicMock(),
+            refresher=MagicMock(),
+            sheets_service_builder=lambda credentials: fake_service,
+            firestore_client=MagicMock(),
+        )
+
+    mark_needs_reauth.assert_called_once_with("U123456", firestore_client=ANY)
+
+
+# --- append_transaction_row -------------------------------------------------------
+
+
+def _fake_txn():
+    from datetime import date
+    return TransactionRow(
+        row_uuid="test-uuid-1",
+        date=date(2026, 6, 26),
+        action=TransactionAction.BUY,
+        stock_query="2330 台積電",
+        quantity=Decimal("10"),
+        amount=Decimal("6000"),
+    )
+
+
+def test_append_transaction_row_appends_correct_row():
+    fake_service = MagicMock()
+    fake_service.spreadsheets.return_value.values.return_value.get.return_value.execute.return_value = {
+        "values": [HEADER_ROW]
+    }
+
+    sheets_client.append_transaction_row(
+        _fake_friend(),
+        "個人帳",
+        _fake_txn(),
+        credentials_builder=lambda enc: MagicMock(),
+        refresher=MagicMock(),
+        sheets_service_builder=lambda credentials: fake_service,
+    )
+
+    append_call = fake_service.spreadsheets.return_value.values.return_value.append
+    append_call.assert_called_once()
+    body = append_call.call_args.kwargs["body"]
+    row = body["values"][0]
+    assert row[0] == "test-uuid-1"   # row_uuid
+    assert row[1] == "2026-06-26"    # 日期
+    assert row[2] == "買"             # 動作
+    assert row[3] == "2330 台積電"   # 股票代碼/名稱
+    assert row[4] == "10"             # 數量
+    assert row[5] == "6000"           # 金額
+    assert row[6] == ""               # 狀態(空白,由下次 resync 更新)
+
+
+def test_append_transaction_row_marks_needs_reauth_on_oauth_failure(monkeypatch):
+    mark_needs_reauth = MagicMock()
+    monkeypatch.setattr(sheets_client, "mark_needs_reauth", mark_needs_reauth)
+
+    with pytest.raises(OAuthInvalidGrantError):
+        sheets_client.append_transaction_row(
+            _fake_friend(),
+            "個人帳",
+            _fake_txn(),
+            credentials_builder=lambda enc: MagicMock(),
+            refresher=lambda creds: (_ for _ in ()).throw(OAuthInvalidGrantError("boom")),
+            sheets_service_builder=MagicMock(),
+            firestore_client=MagicMock(),
+        )
+
+    mark_needs_reauth.assert_called_once_with("U123456", firestore_client=ANY)
+
+
+def test_append_transaction_row_marks_needs_reauth_on_404(monkeypatch):
+    from googleapiclient.errors import HttpError
+
+    class _FakeResp:
+        status = 404
+        reason = "Not Found"
+
+    mark_needs_reauth = MagicMock()
+    monkeypatch.setattr(sheets_client, "mark_needs_reauth", mark_needs_reauth)
+
+    fake_service = MagicMock()
+    fake_service.spreadsheets.return_value.values.return_value.get.return_value.execute.side_effect = (
+        HttpError(_FakeResp(), b"{}")
+    )
+
+    with pytest.raises(HttpError):
+        sheets_client.append_transaction_row(
+            _fake_friend(),
+            "個人帳",
+            _fake_txn(),
             credentials_builder=lambda enc: MagicMock(),
             refresher=MagicMock(),
             sheets_service_builder=lambda credentials: fake_service,

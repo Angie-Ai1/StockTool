@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,8 +10,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.models.schemas import FriendRecord, FriendStatus
+from app.models.schemas import FriendRecord, FriendStatus, Position, StockQuote
 from app.routers import line_webhook
+from app.services.oauth_service import OAuthInvalidGrantError
 
 CHANNEL_SECRET = "dummy-channel-secret"
 
@@ -20,10 +22,21 @@ DUMMY_SETTINGS = Settings(
 )
 
 
+STOCK_LIST = [StockQuote(code="2330", name="台積電", close=Decimal("600"))]
+
+LINKED_FRIEND = FriendRecord(
+    line_user_id="Uxxx",
+    spreadsheet_id="sheet-1",
+    encrypted_refresh_token="enc",
+    account_tabs_cache=["個人"],
+)
+
+
 @pytest.fixture(autouse=True)
 def _dummy_settings(monkeypatch):
     monkeypatch.setattr(line_webhook, "get_settings", lambda: DUMMY_SETTINGS)
     line_webhook._recent_event_ids.clear()
+    line_webhook._pending_selections.clear()
 
 
 @pytest.fixture
@@ -186,14 +199,162 @@ def test_text_message_from_unlinked_friend_replies_with_oauth_link(client, monke
     assert "https://example.com/oauth" in text
 
 
-def test_text_message_from_linked_friend_does_not_reply(client, monkeypatch):
-    linked_friend = FriendRecord(
-        line_user_id="Uxxx", spreadsheet_id="sheet-1", encrypted_refresh_token="enc"
+def test_text_message_linked_friend_no_tabs_replies_error(client, monkeypatch):
+    """已連結但 account_tabs_cache 為空時,回覆找不到帳戶分頁的提示"""
+    friend_no_tabs = FriendRecord(
+        line_user_id="Uxxx", spreadsheet_id="sheet-1", encrypted_refresh_token="enc",
+        account_tabs_cache=[],
     )
-    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=linked_friend))
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=friend_no_tabs))
+    monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=[]))
     reply = MagicMock()
     monkeypatch.setattr(line_webhook, "_reply_text", reply)
 
     _post(client, [_message_event("Uxxx")])
 
-    reply.assert_not_called()
+    reply.assert_called_once()
+    assert "帳戶分頁" in reply.call_args.args[1]
+
+
+def test_text_message_needs_reauth_replies_with_reauth_url(client, monkeypatch):
+    needs_reauth_friend = FriendRecord(
+        line_user_id="Uxxx", spreadsheet_id="sheet-1", encrypted_refresh_token="enc",
+        status=FriendStatus.NEEDS_REAUTH,
+    )
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=needs_reauth_friend))
+    monkeypatch.setattr(
+        line_webhook, "build_authorization_url", MagicMock(return_value="https://example.com/reauth")
+    )
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    _post(client, [_message_event("Uxxx")])
+
+    reply.assert_called_once()
+    assert "https://example.com/reauth" in reply.call_args.args[1]
+
+
+def test_text_message_parse_failure_replies_error(client, monkeypatch):
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
+    monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=[]))
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    event = _message_event("Uxxx")
+    event["message"]["text"] = "這不是記帳格式"
+    _post(client, [event])
+
+    reply.assert_called_once()
+    assert "解析失敗" in reply.call_args.args[1]
+
+
+def test_text_message_booking_success_single_account(client, monkeypatch):
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
+    monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=STOCK_LIST))
+    monkeypatch.setattr(
+        line_webhook, "read_tab_positions", MagicMock(return_value={})
+    )
+    monkeypatch.setattr(line_webhook, "append_transaction_row", MagicMock())
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    _post(client, [_message_event("Uxxx")])  # 訊息為「買 2330 1000 500000」
+
+    reply.assert_called_once()
+    assert "✅" in reply.call_args.args[1]
+    assert "2330" in reply.call_args.args[1]
+    line_webhook.append_transaction_row.assert_called_once()
+
+
+def test_text_message_oversell_replies_error(client, monkeypatch):
+    existing_position = Position(stock_code="2330", quantity=Decimal("5"))
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
+    monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=STOCK_LIST))
+    monkeypatch.setattr(
+        line_webhook, "read_tab_positions", MagicMock(return_value={"2330": existing_position})
+    )
+    monkeypatch.setattr(line_webhook, "append_transaction_row", MagicMock())
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    # 嘗試賣出 1000 股,但只有 5 股
+    event = _message_event("Uxxx")
+    event["message"]["text"] = "賣 2330 1000 500000"
+    _post(client, [event])
+
+    reply.assert_called_once()
+    assert "庫存不足" in reply.call_args.args[1]
+    line_webhook.append_transaction_row.assert_not_called()
+
+
+def test_text_message_multi_account_no_tag_sends_quick_reply(client, monkeypatch):
+    multi_friend = FriendRecord(
+        line_user_id="Uxxx", spreadsheet_id="sheet-1", encrypted_refresh_token="enc",
+        account_tabs_cache=["個人", "配偶"],
+    )
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=multi_friend))
+    monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=STOCK_LIST))
+    quick_reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_with_quick_reply", quick_reply)
+
+    _post(client, [_message_event("Uxxx")])
+
+    quick_reply.assert_called_once()
+    _, text, options = quick_reply.call_args.args
+    assert "帳戶" in text
+    assert set(options) == {"個人", "配偶"}
+    assert "Uxxx" in line_webhook._pending_selections
+
+
+def test_text_message_quick_reply_selection_executes_booking(client, monkeypatch):
+    multi_friend = FriendRecord(
+        line_user_id="Uxxx", spreadsheet_id="sheet-1", encrypted_refresh_token="enc",
+        account_tabs_cache=["個人", "配偶"],
+    )
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=multi_friend))
+    monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=STOCK_LIST))
+    monkeypatch.setattr(line_webhook, "read_tab_positions", MagicMock(return_value={}))
+    append = MagicMock()
+    monkeypatch.setattr(line_webhook, "append_transaction_row", append)
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    # 先觸發 Quick Reply 詢問
+    quick_reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_with_quick_reply", quick_reply)
+    _post(client, [_message_event("Uxxx", event_id="01MSG")])
+    assert "Uxxx" in line_webhook._pending_selections
+
+    # 使用者點選「個人」
+    selection_event = _message_event("Uxxx", event_id="02SEL")
+    selection_event["message"]["text"] = "個人"
+    _post(client, [selection_event])
+
+    reply.assert_called_once()
+    assert "✅" in reply.call_args.args[1]
+    append.assert_called_once()
+    assert "Uxxx" not in line_webhook._pending_selections
+
+
+def test_text_message_new_message_cancels_pending_selection(client, monkeypatch):
+    multi_friend = FriendRecord(
+        line_user_id="Uxxx", spreadsheet_id="sheet-1", encrypted_refresh_token="enc",
+        account_tabs_cache=["個人", "配偶"],
+    )
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=multi_friend))
+    monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=STOCK_LIST))
+    quick_reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_with_quick_reply", quick_reply)
+
+    # 先觸發 Quick Reply
+    _post(client, [_message_event("Uxxx", event_id="01MSG")])
+    assert "Uxxx" in line_webhook._pending_selections
+
+    # 送入不是帳戶名稱的新訊息 → 清除 pending,重新解析
+    new_event = _message_event("Uxxx", event_id="02NEW")
+    new_event["message"]["text"] = "買 2330 10 6000"
+    _post(client, [new_event])
+
+    # pending 應已清除,並再次觸發 Quick Reply(因為還是多帳戶)
+    assert quick_reply.call_count == 2
+    assert "Uxxx" in line_webhook._pending_selections
