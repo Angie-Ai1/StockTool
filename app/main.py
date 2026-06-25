@@ -1,13 +1,15 @@
-"""Phase 0 placeholder entrypoint — verifies Docker/Poetry infra runs end-to-end.
-
-Phase 1.1 will replace this with the real FastAPI app (routers, config, db).
-"""
-
 from fastapi import FastAPI
+
+from app.routers import line_webhook, liff, tick
 
 app = FastAPI(title="Stocktool")
 
 
-@app.get("/health")  # not /healthz — Cloud Run's default *.run.app domain reserves that exact path and never forwards it to the container
+@app.get("/health")  # not /healthz — Cloud Run's *.run.app domain reserves that path and never forwards it to the container
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+app.include_router(line_webhook.router)
+app.include_router(liff.router)
+app.include_router(tick.router)
