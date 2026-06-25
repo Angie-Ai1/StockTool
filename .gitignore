@@ -14,3 +14,4 @@ __pycache__/
 
 # 環境變數(含機密),只保留 .env.example 進版控
 .env
+secrets/
