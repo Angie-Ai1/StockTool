@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
     google_oauth_redirect_uri: str = ""
+    google_sheets_template_id: str = ""
 
     google_application_credentials: str = ""
     firestore_project_id: str = ""

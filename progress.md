@@ -1,6 +1,6 @@
 # 開發進度總覽 — LINE 股市零股記帳小工具
 
-> 最後更新:2026-06-25 18:40
+> 最後更新:2026-06-25 18:50
 
 ## 整體狀態快照
 
@@ -9,8 +9,8 @@
 | 規格設計(MVP / Phase 1) | 100% | `██████████` | 已逐項討論定案,含核心邏輯、隱私架構、可靠性機制 |
 | 規格設計(Phase 2~8) | 約 70% | `███████░░░` | 功能範圍已定,部分細節(手續費折數規則等)待展開 |
 | Phase 0 基礎設施建置 | 95%(18/19) | `█████████░` | 本機開發環境 100% 完成;雲端帳號設定僅缺 `ADMIN_LINE_USER_ID`(不含選用的帳單保險項目) |
-| Phase 1 MVP 程式碼 | 31%(15/48) | `███░░░░░░░` | 已完成 1.1 部分骨架、1.4 `parser.py`+`fuzzy_match.py`(模糊比對)、1.5 `pnl_engine.py`,額外建好 1.9 會用到的 `market_data_client.py`(TWSE/TPEx 清單,提前做);1.2、1.3、1.6~1.12 尚未開始 |
-| 測試覆蓋 | 80%(4/5) | `████████░░` | `test_parser.py`、`test_pnl_engine.py`、`test_fuzzy_match.py`、`test_market_data_client.py` 共 30 案例全數通過;`test_oauth_service.py` 待 `oauth_service.py` 寫完才能寫 |
+| Phase 1 MVP 程式碼 | 40%(19/48) | `████░░░░░░` | 已完成 1.1 部分骨架、1.3 OAuth 連結 4/5(`oauth_service.py`+`sheets_client.py`,差「親友刪除試算表」實際呼叫點留給 1.6)、1.4 `parser.py`+`fuzzy_match.py`、1.5 `pnl_engine.py`,額外建好 1.9 會用到的 `market_data_client.py`;1.2、1.6~1.12 尚未開始 |
+| 測試覆蓋 | 100%(6/6) | `██████████` | `test_parser.py`、`test_pnl_engine.py`、`test_fuzzy_match.py`、`test_market_data_client.py`、`test_oauth_service.py`、`test_sheets_client.py` 共 38 案例全數通過,皆不依賴本機真實 `.env`/打真實外部 API |
 | 部署上線:基礎設施 | 100% | `██████████` | Cloud Run 服務運作中(僅 `/health`) |
 | 部署上線:功能 | 0% | `░░░░░░░░░░` | webhook/OAuth/tick 等功能路由尚未實作上線 |
 
@@ -54,7 +54,7 @@
 
 ---
 
-## Phase 1 — MVP 實作(🔄 31%,15/48 子項)
+## Phase 1 — MVP 實作(🔄 40%,19/48 子項)
 
 ### 1.1 專案骨架(✅ 3/4)
 
@@ -75,15 +75,15 @@
 | ⬜ | `follow` 事件處理 | 查 Firestore 判斷是否為回鍋舊親友,是則狀態改回「啟用」 |
 | ⬜ | `unfollow` 事件處理 | 標記 Firestore 該親友為「已停用」,不刪除資料;後續主動推播邏輯先檢查此狀態,停用則跳過 |
 
-### 1.3 OAuth 與試算表建立(⬜ 0/5,`app/services/oauth_service.py`、`sheets_client.py`)
+### 1.3 OAuth 與試算表建立(✅ 4/5,`app/services/oauth_service.py`、`sheets_client.py`)
 
 | 狀態 | 項目 | 備註 |
 |---|---|---|
-| ⬜ | Google OAuth 2.0 授權流程 | `/oauth/callback`,state 參數攜帶 LINE user ID 防 CSRF |
-| ⬜ | 自動複製範本進親友個人 Drive | 含分頁結構、欄位標題、資料驗證規則、版本號標記 |
-| ⬜ | Firestore 寫入對照表 | `spreadsheet_id`、`encrypted_refresh_token`(加密儲存)、`account_tabs_cache`、`status` |
-| ⬜ | OAuth 失效偵測(`invalid_grant`) | 標記 Firestore 狀態 `needs_reauth` → 主動推播通知親友重新連結 |
-| ⬜ | 親友刪除試算表(Drive API 404) | 與 OAuth 失效採同一套復原流程 |
+| ✅ | Google OAuth 2.0 授權流程 | `oauth_service.build_authorization_url()`(state 帶 LINE user ID 防 CSRF)+ `exchange_code_for_credentials()`。**還沒掛 `/oauth/callback` 路由**,屬之後 `app/routers/` 那輪要做的事,這裡先做完可單獨測試的業務邏輯 |
+| ✅ | 自動複製範本進親友個人 Drive | `sheets_client.copy_template_to_drive()`,用親友自己的 OAuth 授權呼叫 Drive API。⚠️ scope 用完整 `drive`(非 `drive.file`),理由見 `openspecs/DE.md` 18:55 區塊;範本本身(分頁結構/資料驗證/版本號標記)需手動在 Drive 建立一次,檔案 ID 填入新增的 `GOOGLE_SHEETS_TEMPLATE_ID`,目前仍空白 |
+| ✅ | Firestore 寫入對照表 | `oauth_service.link_friend_account()` 串起換 token → 複製範本 → 加密 refresh token → 寫入 `friends/{line_user_id}`,欄位與 schema 一致 |
+| ✅ | OAuth 失效偵測(`invalid_grant`) | `oauth_service.refresh_or_raise()` 捕捉 `RefreshError` 包成 `OAuthInvalidGrantError`;`mark_needs_reauth()` 標記 Firestore 狀態。**實際呼叫點(對親友既有試算表做操作時)留給 1.6 resync**,這裡先把共用的偵測/標記邏輯做成可獨立測試的單元 |
+| ⬜ | 親友刪除試算表(Drive API 404) | 與上一項共用同一個 `mark_needs_reauth()` 復原流程,但偵測 404 的呼叫點同樣在 1.6 resync 才會真正出現,目前還沒有程式碼路徑會撞到這個情境 |
 
 ### 1.4 記帳文字解析(✅ 6/7,`app/services/parser.py`)
 
@@ -163,7 +163,7 @@
 | ⬜ | 機器人回覆採朋友語氣 | 例如「好的,幫你記下囉 📝」取代「已記錄」 |
 | ⬜ | 個人化稱呼 | 取得親友 LINE 顯示名稱,訊息中個人化帶入名字 |
 
-### 1.13 測試(✅ 4/5)
+### 1.13 測試(✅ 6/6)
 
 | 狀態 | 項目 | 備註 |
 |---|---|---|
@@ -171,7 +171,8 @@
 | ✅ | `tests/test_pnl_engine.py` | 10 案例 |
 | ✅ | `tests/test_fuzzy_match.py` | 5 案例(精確代碼、精確名稱、模糊比對、查無此股票、空白輸入) |
 | ✅ | `tests/test_market_data_client.py` | 3 案例(TWSE/TPEx 個別解析、`--` 收盤價轉 `None`、合併清單),用 `httpx.MockTransport` 隔離真實網路請求 |
-| ⬜ | `tests/test_oauth_service.py` | 待 `oauth_service.py` 完成 |
+| ✅ | `tests/test_oauth_service.py` | 7 案例,settings 用 monkeypatch 注入假值(client id/secret、產生的 Fernet key),不依賴本機真實 `.env` 內容,也不打真實 Google API |
+| ✅ | `tests/test_sheets_client.py` | 1 案例,monkeypatch `googleapiclient.discovery.build` 隔離真實 Drive API 請求 |
 
 ---
 
@@ -255,5 +256,6 @@
 0. 部署平台已改為 **Cloud Run + Cloud Scheduler**(ADR-021,取代 ADR-020 的 Render 方案)。GCP 專案(`stocktool-500502`)與 Cloud Run 服務已建立並部署成功,網址 `https://stocktool-22843182344.asia-southeast1.run.app`,健康檢查路由為 `/health`(不是 `/healthz`,原因見 `openspecs/debugging_notes.md`)。
 1. Phase 0 雲端帳號設定:除 `ADMIN_LINE_USER_ID`(需先加自己官方帳號好友取得)外,使用者回報其餘項目皆已完成;本機檔案證據(`.env`、`secrets/`)可佐證 LINE/OAuth/Firestore/加密金鑰皆已就位。⚠️ Firestore 金鑰存放方式改用 Secret Manager(見上方「目前卡在」),Cloud Run 主控台的對應設定**尚未確認是否已完成**。
 2. **18:01 完成(Phase 1)**:1.1 骨架(`app/config.py`、`app/models/schemas.py`、`app/db/firestore_client.py`)、1.4 `app/services/parser.py`(完整 4.2~4.7 規則,股票模糊比對留介面給尚未建立的 `fuzzy_match.py`)、1.5 `app/services/pnl_engine.py`(移動加權平均成本法、已實現/未實現損益、賣超防呆)、對應測試 `tests/test_parser.py` + `tests/test_pnl_engine.py`(22 案例全數通過)。`firestore_client.py` 改用 Secret Manager 後只靠 `GOOGLE_APPLICATION_CREDENTIALS` 檔案路徑取得憑證(Application Default Credentials 自動讀取),本機/Cloud Run 共用同一套邏輯,不需要分支判斷。順手修了 `docker-compose.yml` 缺少的 Firestore 金鑰 volume mount,以及 `technical_spec.md` 跟 `cloud_setting.md` 之間 LINE webhook 路徑(`/line/webhook`)的文件不一致。這幾項變更已於後續 commit(`0a265ac`、`d8a1e32`、`e40eeee`、`30c5633`、`4297a5c`)收斂完畢。
-3. **18:40 完成(Phase 1)**:1.4 剩下的 `app/services/fuzzy_match.py`(`resolve_stock()`,代碼精確比對優先、`thefuzz` fallback,門檻分數 70)。額外提前建好 `app/services/market_data_client.py`(`fetch_stock_list()`,合併 TWSE `STOCK_DAY_ALL` + TPEx `tpex_mainboard_daily_close_quotes` 兩個官方 OpenAPI,回傳代碼/名稱/收盤價),原規劃在 1.9 才做,因為跟 1.4 模糊比對需要同一份清單而提前做掉。`app/models/schemas.py` 新增 `StockQuote` 模型。對應測試 `tests/test_fuzzy_match.py` + `tests/test_market_data_client.py`(後者用 `httpx.MockTransport` 隔離真實網路請求),全專案共 30 案例全數通過。這幾項變更尚未 commit。
-4. **下一步建議順序**:`app/services/oauth_service.py` + `app/services/sheets_client.py`(需要實際 Google API 串接,會用到先前確認過的雲端憑證)→ `app/routers/line_webhook.py` 把 parser/pnl_engine/fuzzy_match 串成完整訊息處理流程 → `app/routers/tick.py`(屆時直接呼叫已就位的 `market_data_client.fetch_stock_list()`,只需補快取與 14:30 排程判斷)→ `app/routers/liff.py`。`app/main.py` 要等 webhook/liff/tick 路由都掛上後才會從 Phase 0 骨架升級成正式進入點。
+3. **18:40 完成(Phase 1)**:1.4 剩下的 `app/services/fuzzy_match.py`(`resolve_stock()`,代碼精確比對優先、`thefuzz` fallback,門檻分數 70)。額外提前建好 `app/services/market_data_client.py`(`fetch_stock_list()`,合併 TWSE `STOCK_DAY_ALL` + TPEx `tpex_mainboard_daily_close_quotes` 兩個官方 OpenAPI,回傳代碼/名稱/收盤價),原規劃在 1.9 才做,因為跟 1.4 模糊比對需要同一份清單而提前做掉。`app/models/schemas.py` 新增 `StockQuote` 模型。對應測試 `tests/test_fuzzy_match.py` + `tests/test_market_data_client.py`(後者用 `httpx.MockTransport` 隔離真實網路請求),全專案共 30 案例全數通過。這幾項變更已 commit(`4f68c76`),尚未 push。
+4. **18:50 完成(Phase 1)**:1.3 OAuth 與試算表建立 4/5。`app/services/oauth_service.py`:`build_authorization_url()`/`exchange_code_for_credentials()`(OAuth 流程,state 帶 LINE user ID)、`encrypt_refresh_token()`/`decrypt_refresh_token()`(`cryptography.fernet`)、`refresh_or_raise()`(包 `RefreshError` 成 `OAuthInvalidGrantError`)、`mark_needs_reauth()`(Firestore 狀態標記,OAuth 失效跟 Drive 404 共用)、`link_friend_account()`(串起整段流程並寫入 Firestore)。`app/services/sheets_client.py`:`copy_template_to_drive()`(用親友自己的授權複製範本)。`app/config.py` 新增 `google_sheets_template_id` 欄位(目前空白,待手動建立範本試算表後填入)。對應測試 `tests/test_oauth_service.py`(7 案例,monkeypatch 假 settings,不依賴本機 `.env` 真實值)+ `tests/test_sheets_client.py`(1 案例),全專案共 38 案例全數通過。**還沒做**:`/oauth/callback` FastAPI 路由本身(留給之後建 `app/routers/` 那輪)、「親友刪除試算表 Drive 404」的實際偵測呼叫點(要等 1.6 resync 才有程式碼真的去呼叫已存在親友的試算表)。這幾項變更尚未 commit。
+5. **下一步建議順序**:`app/routers/line_webhook.py`(把 parser/pnl_engine/fuzzy_match 串成完整訊息處理流程,順便決定 `/oauth/callback` 路由要不要跟它一起掛上)→ `app/routers/tick.py`(直接呼叫已就位的 `market_data_client.fetch_stock_list()`,只需補快取與 14:30 排程判斷)→ `app/services/sheets_client.resync()`(1.6,會用到 1.3 的 `mark_needs_reauth()` 處理 Drive 404)→ `app/routers/liff.py`。`app/main.py` 要等 webhook/liff/tick 路由都掛上後才會從 Phase 0 骨架升級成正式進入點。
