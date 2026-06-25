@@ -71,6 +71,14 @@ class ParseResult(BaseModel):
     errors: list[ParseError] = []
 
 
+class StockQuote(BaseModel):
+    """單一證券的代碼/名稱/收盤價 — 規格 6.1,TWSE(上市)/TPEx(上櫃)清單共用欄位"""
+
+    code: str
+    name: str
+    close: Decimal | None = None
+
+
 class Position(BaseModel):
     """單一帳戶內、單一股票的目前庫存與均價 — 規格 5.2"""
 

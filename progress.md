@@ -1,6 +1,6 @@
 # 開發進度總覽 — LINE 股市零股記帳小工具
 
-> 最後更新:2026-06-25 18:14
+> 最後更新:2026-06-25 18:40
 
 ## 整體狀態快照
 
@@ -9,8 +9,8 @@
 | 規格設計(MVP / Phase 1) | 100% | `██████████` | 已逐項討論定案,含核心邏輯、隱私架構、可靠性機制 |
 | 規格設計(Phase 2~8) | 約 70% | `███████░░░` | 功能範圍已定,部分細節(手續費折數規則等)待展開 |
 | Phase 0 基礎設施建置 | 95%(18/19) | `█████████░` | 本機開發環境 100% 完成;雲端帳號設定僅缺 `ADMIN_LINE_USER_ID`(不含選用的帳單保險項目) |
-| Phase 1 MVP 程式碼 | 29%(14/48) | `███░░░░░░░` | 已完成 1.1 部分骨架、1.4 `parser.py`、1.5 `pnl_engine.py`;1.2、1.3、1.6~1.12 尚未開始 |
-| 測試覆蓋 | 67%(2/3) | `███████░░░` | `test_parser.py`、`test_pnl_engine.py` 共 22 案例全數通過;`test_oauth_service.py` 待 `oauth_service.py` 寫完才能寫 |
+| Phase 1 MVP 程式碼 | 31%(15/48) | `███░░░░░░░` | 已完成 1.1 部分骨架、1.4 `parser.py`+`fuzzy_match.py`(模糊比對)、1.5 `pnl_engine.py`,額外建好 1.9 會用到的 `market_data_client.py`(TWSE/TPEx 清單,提前做);1.2、1.3、1.6~1.12 尚未開始 |
+| 測試覆蓋 | 80%(4/5) | `████████░░` | `test_parser.py`、`test_pnl_engine.py`、`test_fuzzy_match.py`、`test_market_data_client.py` 共 30 案例全數通過;`test_oauth_service.py` 待 `oauth_service.py` 寫完才能寫 |
 | 部署上線:基礎設施 | 100% | `██████████` | Cloud Run 服務運作中(僅 `/health`) |
 | 部署上線:功能 | 0% | `░░░░░░░░░░` | webhook/OAuth/tick 等功能路由尚未實作上線 |
 
@@ -54,7 +54,7 @@
 
 ---
 
-## Phase 1 — MVP 實作(🔄 29%,14/48 子項)
+## Phase 1 — MVP 實作(🔄 31%,15/48 子項)
 
 ### 1.1 專案骨架(✅ 3/4)
 
@@ -85,7 +85,7 @@
 | ⬜ | OAuth 失效偵測(`invalid_grant`) | 標記 Firestore 狀態 `needs_reauth` → 主動推播通知親友重新連結 |
 | ⬜ | 親友刪除試算表(Drive API 404) | 與 OAuth 失效採同一套復原流程 |
 
-### 1.4 記帳文字解析(✅ 5/7,`app/services/parser.py`)
+### 1.4 記帳文字解析(✅ 6/7,`app/services/parser.py`)
 
 | 狀態 | 項目 | 備註 |
 |---|---|---|
@@ -93,9 +93,11 @@
 | ✅ | 三種輸入形式統一規則 | 數量+金額反推單價 / 僅金額用收盤價反推估算股數,反推單價統一取小數 2 位、`ROUND_HALF_UP`,成本計算永遠以原始輸入總金額為準。⚠️「僅金額」需注入 `closing_price_lookup` callable 才能運作,目前無收盤價來源(TWSE/TPEx 串接屬 1.9),沒有注入時回報該行解析失敗,不會猜測 |
 | ✅ | 股息/配股格式解析 | `股息 個股 金額`、`配股 個股 股數` |
 | ✅ | 換行批次記帳 | 一次解析多筆,部分行解析失敗只回該行錯誤(含行號),不整批作廢(實際 batch 寫入 Sheets 屬 1.6) |
-| ⬜ | 股票代碼/名稱模糊比對 | `app/services/fuzzy_match.py` 尚未建立;代碼精確比對(O(1) 字典)優先,查不到才 fallback `thefuzz`。parser 目前只回傳原始 `stock_query` 字串,留介面給這支 |
+| ✅ | 股票代碼/名稱模糊比對 | `app/services/fuzzy_match.py`:`resolve_stock()`,代碼精確比對(O(1) 字典)優先,查不到才 fallback `thefuzz`(`process.extractOne`,門檻分數 70)。股票清單由呼叫端注入(不在這支自己打 API),實際清單來源見下方 `market_data_client.py` |
 | ⬜ | 多帳戶記帳前選擇 | 單帳戶不問;多帳戶且訊息無標籤 → Quick Reply 選單(批次只問一次);已標籤則跳過詢問。parser 已能解析 `個人/買入...` 標籤,Quick Reply 互動邏輯屬 `line_webhook.py` |
 | ✅ | 解析失敗時引導重新輸入 | 不做猜測性寫入,parser 對每種格式錯誤都回報明確中文原因,供之後 webhook 直接組訊息回覆 |
+
+> ⚠️ 開發本項時提前建好 `app/services/market_data_client.py`(規格 6.1,`fetch_stock_list()` 合併 TWSE `STOCK_DAY_ALL` + TPEx `tpex_mainboard_daily_close_quotes` 兩個 OpenAPI,回傳代碼/名稱/收盤價)。原規劃在 1.9 才做,因為 `fuzzy_match.py` 跟 1.9 的收盤價需求其實是同一份清單,選擇現在一次建好,1.9 屆時只需呼叫 + 補上快取與排程判斷,不需重新設計資料來源。
 
 ### 1.5 損益引擎(✅ 4/4,`app/services/pnl_engine.py`)
 
@@ -136,7 +138,7 @@
 |---|---|---|
 | ⬜ | 單一外部 Cron 進入點 `/tick` | 收到請求立即回應 200 OK,實際重任務丟 `BackgroundTasks` 背景執行 |
 | ⬜ | 內部判斷是否已過今日 14:30 | Asia/Taipei,且 Firestore 是否已記錄「今日已執行」 |
-| ⬜ | 14:30 收盤任務 | 抓 TWSE/TPEx 收盤價與代碼清單 → 逐位親友依序 resync(留間隔避免撞 Sheets API 共用配額)→ 標記今日已執行 |
+| ⬜ | 14:30 收盤任務 | 抓 TWSE/TPEx 收盤價與代碼清單(資料來源已就位,見 `app/services/market_data_client.py`)→ 逐位親友依序 resync(留間隔避免撞 Sheets API 共用配額)→ 標記今日已執行 |
 
 ### 1.10 共用通知元件(⬜ 0/4,`app/services/notify_service.py`)
 
@@ -161,12 +163,14 @@
 | ⬜ | 機器人回覆採朋友語氣 | 例如「好的,幫你記下囉 📝」取代「已記錄」 |
 | ⬜ | 個人化稱呼 | 取得親友 LINE 顯示名稱,訊息中個人化帶入名字 |
 
-### 1.13 測試(✅ 2/3)
+### 1.13 測試(✅ 4/5)
 
 | 狀態 | 項目 | 備註 |
 |---|---|---|
 | ✅ | `tests/test_parser.py` | 12 案例 |
 | ✅ | `tests/test_pnl_engine.py` | 10 案例 |
+| ✅ | `tests/test_fuzzy_match.py` | 5 案例(精確代碼、精確名稱、模糊比對、查無此股票、空白輸入) |
+| ✅ | `tests/test_market_data_client.py` | 3 案例(TWSE/TPEx 個別解析、`--` 收盤價轉 `None`、合併清單),用 `httpx.MockTransport` 隔離真實網路請求 |
 | ⬜ | `tests/test_oauth_service.py` | 待 `oauth_service.py` 完成 |
 
 ---
@@ -250,5 +254,6 @@
 
 0. 部署平台已改為 **Cloud Run + Cloud Scheduler**(ADR-021,取代 ADR-020 的 Render 方案)。GCP 專案(`stocktool-500502`)與 Cloud Run 服務已建立並部署成功,網址 `https://stocktool-22843182344.asia-southeast1.run.app`,健康檢查路由為 `/health`(不是 `/healthz`,原因見 `openspecs/debugging_notes.md`)。
 1. Phase 0 雲端帳號設定:除 `ADMIN_LINE_USER_ID`(需先加自己官方帳號好友取得)外,使用者回報其餘項目皆已完成;本機檔案證據(`.env`、`secrets/`)可佐證 LINE/OAuth/Firestore/加密金鑰皆已就位。⚠️ Firestore 金鑰存放方式改用 Secret Manager(見上方「目前卡在」),Cloud Run 主控台的對應設定**尚未確認是否已完成**。
-2. **本次完成(Phase 1)**:1.1 骨架(`app/config.py`、`app/models/schemas.py`、`app/db/firestore_client.py`)、1.4 `app/services/parser.py`(完整 4.2~4.7 規則,股票模糊比對留介面給尚未建立的 `fuzzy_match.py`)、1.5 `app/services/pnl_engine.py`(移動加權平均成本法、已實現/未實現損益、賣超防呆)、對應測試 `tests/test_parser.py` + `tests/test_pnl_engine.py`(22 案例全數通過)。`firestore_client.py` 改用 Secret Manager 後只靠 `GOOGLE_APPLICATION_CREDENTIALS` 檔案路徑取得憑證(Application Default Credentials 自動讀取),本機/Cloud Run 共用同一套邏輯,不需要分支判斷。順手修了 `docker-compose.yml` 缺少的 Firestore 金鑰 volume mount,以及 `technical_spec.md` 跟 `cloud_setting.md` 之間 LINE webhook 路徑(`/line/webhook`)的文件不一致。這幾項變更(含 `app/main.py`、`progress.md` 既有未提交的修改)尚未 commit。
-3. **下一步建議順序**:`app/services/fuzzy_match.py`(股票代碼/名稱比對,parser 已留好介面)→ `app/services/oauth_service.py` + `app/services/sheets_client.py`(需要實際 Google API 串接,會用到第 1 點確認過的雲端憑證)→ `app/routers/line_webhook.py` 把 parser/pnl_engine/fuzzy_match 串成完整訊息處理流程 → `app/routers/tick.py` → `app/routers/liff.py`。`app/main.py` 要等 webhook/liff/tick 路由都掛上後才會從 Phase 0 骨架升級成正式進入點。
+2. **18:01 完成(Phase 1)**:1.1 骨架(`app/config.py`、`app/models/schemas.py`、`app/db/firestore_client.py`)、1.4 `app/services/parser.py`(完整 4.2~4.7 規則,股票模糊比對留介面給尚未建立的 `fuzzy_match.py`)、1.5 `app/services/pnl_engine.py`(移動加權平均成本法、已實現/未實現損益、賣超防呆)、對應測試 `tests/test_parser.py` + `tests/test_pnl_engine.py`(22 案例全數通過)。`firestore_client.py` 改用 Secret Manager 後只靠 `GOOGLE_APPLICATION_CREDENTIALS` 檔案路徑取得憑證(Application Default Credentials 自動讀取),本機/Cloud Run 共用同一套邏輯,不需要分支判斷。順手修了 `docker-compose.yml` 缺少的 Firestore 金鑰 volume mount,以及 `technical_spec.md` 跟 `cloud_setting.md` 之間 LINE webhook 路徑(`/line/webhook`)的文件不一致。這幾項變更已於後續 commit(`0a265ac`、`d8a1e32`、`e40eeee`、`30c5633`、`4297a5c`)收斂完畢。
+3. **18:40 完成(Phase 1)**:1.4 剩下的 `app/services/fuzzy_match.py`(`resolve_stock()`,代碼精確比對優先、`thefuzz` fallback,門檻分數 70)。額外提前建好 `app/services/market_data_client.py`(`fetch_stock_list()`,合併 TWSE `STOCK_DAY_ALL` + TPEx `tpex_mainboard_daily_close_quotes` 兩個官方 OpenAPI,回傳代碼/名稱/收盤價),原規劃在 1.9 才做,因為跟 1.4 模糊比對需要同一份清單而提前做掉。`app/models/schemas.py` 新增 `StockQuote` 模型。對應測試 `tests/test_fuzzy_match.py` + `tests/test_market_data_client.py`(後者用 `httpx.MockTransport` 隔離真實網路請求),全專案共 30 案例全數通過。這幾項變更尚未 commit。
+4. **下一步建議順序**:`app/services/oauth_service.py` + `app/services/sheets_client.py`(需要實際 Google API 串接,會用到先前確認過的雲端憑證)→ `app/routers/line_webhook.py` 把 parser/pnl_engine/fuzzy_match 串成完整訊息處理流程 → `app/routers/tick.py`(屆時直接呼叫已就位的 `market_data_client.fetch_stock_list()`,只需補快取與 14:30 排程判斷)→ `app/routers/liff.py`。`app/main.py` 要等 webhook/liff/tick 路由都掛上後才會從 Phase 0 骨架升級成正式進入點。
