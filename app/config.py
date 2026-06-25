@@ -21,6 +21,8 @@ class Settings(BaseSettings):
 
     admin_line_user_id: str = ""
 
+    tick_shared_secret: str = ""
+
     port: int = 8000
     tz: str = "Asia/Taipei"
 

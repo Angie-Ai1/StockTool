@@ -15,7 +15,6 @@ from google_auth_oauthlib.flow import Flow
 from app.config import get_settings
 from app.db.firestore_client import get_firestore_client
 from app.models.schemas import FriendRecord, FriendStatus
-from app.services.sheets_client import copy_template_to_drive
 
 GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -97,20 +96,12 @@ def refresh_or_raise(credentials: Credentials) -> None:
         raise OAuthInvalidGrantError(str(exc)) from exc
 
 
-def mark_needs_reauth(line_user_id: str, firestore_client=None) -> None:
-    """標記 Firestore 狀態為需要重新連結——OAuth 失效、Drive 404 共用同一套復原流程,規格 2.6"""
-    client = firestore_client or get_firestore_client()
-    client.collection("friends").document(line_user_id).update(
-        {"status": FriendStatus.NEEDS_REAUTH.value}
-    )
-
-
 def link_friend_account(
     line_user_id: str,
     code: str,
     *,
     credentials_exchanger: Callable[[str], Credentials] = exchange_code_for_credentials,
-    template_copier: Callable[[Credentials, str], str] = copy_template_to_drive,
+    template_copier: Callable[[Credentials, str], str] | None = None,
     firestore_client=None,
 ) -> FriendRecord:
     """`/oauth/callback` 收到 code 後的完整連結流程——規格 2.2。
@@ -118,6 +109,13 @@ def link_friend_account(
     依序:用授權碼換 token → 用親友自己的授權把範本複製進他的 Drive →
     加密 refresh token → 寫入 Firestore 對照表。
     """
+    if template_copier is None:
+        # 延遲 import:sheets_client.resync() 也需要本模組的憑證函式,模組層級互相
+        # import 會造成循環依賴,延遲到呼叫時才 import 即可避開——細節見 openspecs/DE.md。
+        from app.services.sheets_client import copy_template_to_drive
+
+        template_copier = copy_template_to_drive
+
     credentials = credentials_exchanger(code)
     spreadsheet_id = template_copier(credentials, get_settings().google_sheets_template_id)
     friend = FriendRecord(

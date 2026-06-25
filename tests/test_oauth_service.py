@@ -60,16 +60,6 @@ def test_refresh_or_raise_wraps_refresh_error():
         oauth_service.refresh_or_raise(credentials)
 
 
-def test_mark_needs_reauth_updates_firestore_status():
-    fake_client = MagicMock()
-    oauth_service.mark_needs_reauth("U123456", firestore_client=fake_client)
-    fake_client.collection.assert_called_once_with("friends")
-    fake_client.collection.return_value.document.assert_called_once_with("U123456")
-    fake_client.collection.return_value.document.return_value.update.assert_called_once_with(
-        {"status": FriendStatus.NEEDS_REAUTH.value}
-    )
-
-
 def test_link_friend_account_orchestrates_exchange_copy_and_firestore_write():
     fake_credentials = MagicMock(refresh_token="a-refresh-token")
     fake_exchanger = MagicMock(return_value=fake_credentials)

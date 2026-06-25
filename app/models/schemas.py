@@ -86,3 +86,16 @@ class Position(BaseModel):
     quantity: Decimal = Decimal("0")
     avg_cost: Decimal = Decimal("0")
     realized_pnl: Decimal = Decimal("0")
+
+
+class AccountResyncResult(BaseModel):
+    """單一帳戶(分頁)resync 後的庫存結果 — 規格 1.6"""
+
+    tab_name: str
+    positions: list[Position] = []
+
+
+class ResyncResult(BaseModel):
+    """sheets_client.resync() 的回傳值,供 LINE 查詢/LIFF/排程任務直接使用,不另外持久化 — 規格 1.6"""
+
+    accounts: list[AccountResyncResult] = []
