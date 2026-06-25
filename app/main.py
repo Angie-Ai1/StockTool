@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.routers import line_webhook, liff, tick
+from app.routers import line_webhook, liff, oauth_callback, tick
 
 app = FastAPI(title="Stocktool")
 
@@ -12,4 +12,5 @@ def health() -> dict[str, str]:
 
 app.include_router(line_webhook.router)
 app.include_router(liff.router)
+app.include_router(oauth_callback.router)
 app.include_router(tick.router)
