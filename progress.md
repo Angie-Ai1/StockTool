@@ -1,5 +1,7 @@
 # 開發進度總覽 — LINE 股市零股記帳小工具
 
+> 最後更新:2026-06-25 10:17
+
 ## 整體狀態快照
 
 | 維度 | 完整度 | 說明 |
@@ -28,13 +30,17 @@
 - [x] `.gitignore` 補上 `.venv/`、`__pycache__/`、`.pytest_cache/`、`.env`(`.env.example` 維持進版控)
 
 ### 雲端帳號設定(待使用者執行,需登入個人帳號,Claude 無法代為操作)
+
+> 詳細操作步驟、網址、填值對照表已整理成 `Instruction/cloud_setting.md`(本檔不進版控),照著做即可,下面只列勾選清單。
+
 - [ ] 建立 Google Cloud 專案
 - [ ] 啟用 Sheets API + Drive API
-- [ ] 設定 OAuth 同意畫面(**測試模式**,把每位親友 Gmail 加入「測試使用者」清單,上限約 100 人)
+- [ ] 設定 OAuth 同意畫面(Google Auth Platform):⚠️ 已更正為 **In production + 不送驗證**(取代原計畫的測試模式,原因見 `openspecs/DE.md` 2026-06-25 09:59 區塊——測試模式會讓 refresh token 每 7 天強制失效)
 - [ ] 產生並設定加密金鑰(如 `cryptography.fernet` key),存於 Render 環境變數,**不寫入程式碼/不進版控**
-- [ ] 申請 LINE Channel(Messaging API),取得 Channel Secret / Access Token
+- [ ] 申請 LINE 官方帳號 + 啟用 Messaging API Channel,取得 Channel Secret / Access Token
 - [ ] 設定 LINE Rich Menu 雛形(供 Phase 1 查詢/說明按鈕使用)
-- [ ] 建立 Google Cloud Firestore(NoSQL 文件資料庫,存放 `friends/{line_user_id}` 對照表與 `system/scheduler` 排程狀態)
+- [ ] 建立 Google Cloud Firestore(Native mode,`asia-southeast1`)+ 建立 Service Account 金鑰
+- [ ] (選用)Firestore 帳單硬上限保險:預算 → Pub/Sub → Cloud Function 自動關閉 Billing,程式碼已備好於 `Instruction/billing-killswitch/`,步驟見 `cloud_setting.md` 第 4.3 節
 - [ ] 建立 Render 服務(免費方案,**選 Singapore 機房**降低台灣延遲),確認當下實際免費額度規則(運行時數上限、LINE push 月配額)(部署平台決策見 ADR-020)
 - [ ] 設定外部 Cron(如 cron-job.org),每 10 分鐘呼叫 `/tick`,**時區指定 Asia/Taipei**
 
@@ -181,5 +187,6 @@
 
 ## 下次可從哪裡接續
 
-1. **使用者本人**完成 Phase 0 剩下唯一的區塊:雲端帳號設定清單(GCP 專案、OAuth 同意畫面、LINE Channel、Firestore、Render 服務、外部 Cron)。本機開發環境(Poetry/Docker)已全部驗證完成。
+0. 本機這批 Phase 0 變更已 commit(`e5db12c`),但 `git push origin main` 在這個沙箱環境失敗(沒有 GitHub 認證)。需要使用者自己在已登入 GitHub 的終端機/IDE 執行 `git push origin main`。
+1. **使用者本人**依 `Instruction/cloud_setting.md` 完成 Phase 0 剩下唯一的區塊:雲端帳號設定(GCP 專案、OAuth 同意畫面、LINE Channel、Firestore、Render 服務、外部 Cron,選用的 Firestore 帳單硬上限保險)。本機開發環境(Poetry/Docker)已全部驗證完成。
 2. Phase 0 雲端帳號到位後接續 **Phase 1**,建議依架構文件的模組順序實作:先 `parser.py` + `pnl_engine.py`(純邏輯、易單元測試)→ `oauth_service.py` + `sheets_client.py` → `line_webhook.py` 串接 → `tick.py` 排程 → `liff.py`。
