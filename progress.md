@@ -6,16 +6,28 @@
 |---|---|---|
 | 規格設計(MVP / Phase 1) | 100% | 已逐項討論定案,含核心邏輯、隱私架構、可靠性機制 |
 | 規格設計(Phase 2~8) | 約 70% | 功能範圍已定,部分細節(手續費折數規則等)待展開 |
-| 程式碼實作 | 0% | **commit 數 = 0**,repo 內無任何應用程式原始碼 |
-| 測試覆蓋 | 0% | 尚無程式碼可供測試 |
+| 程式碼實作 | 進行中 | Phase 0 本機可建置部分已完成(Poetry / Dockerfile / docker-compose / `.env.example`);應用程式邏輯(`app/services` 等)尚未開始 |
+| 測試覆蓋 | 0% | 測試框架(pytest)已就位,尚無實際測試案例 |
 | 部署上線 | 0% | 尚未建立任何雲端資源(GCP 專案、LINE Channel、Render 服務) |
 
-**目前卡在**:規格 → 實作的交接點,尚未啟動 Phase 0。
+**目前卡在**:Phase 0 中需要使用者本人帳號操作的雲端服務申請(GCP / LINE / Render / 外部 Cron)尚待使用者執行,Claude 無法代為登入第三方主控台完成。
 
 ---
 
-## Phase 0 — 基礎設施建置(未開始)
+## Phase 0 — 基礎設施建置(本機部分已完成,雲端帳號部分待使用者執行)
 
+### 本機開發環境(已完成,2026-06-25)
+- [x] 用 **Poetry** 初始化專案(`pyproject.toml` 鎖定 Python `^3.10`、`poetry.lock`),取代 `requirements.txt`
+- [x] 依架構文件技術棧鎖定生產依賴:fastapi、uvicorn、pydantic/pydantic-settings、line-bot-sdk、google-api-python-client、google-auth、google-auth-oauthlib、google-cloud-firestore、cryptography、thefuzz、httpx
+- [x] 依 `1.13 測試` 規劃新增 dev 依賴:pytest、pytest-asyncio
+- [x] 建立 `.env.example`(LINE channel secret、Google OAuth client、Firestore 服務帳號金鑰路徑、加密金鑰、`ADMIN_LINE_USER_ID` 等欄位)
+- [x] 建立 `Dockerfile`(`python:3.12-slim` + 容器內安裝 Poetry + `poetry install --only main`)與 `docker-compose.yml`
+- [x] 建立 `app/main.py` 最小骨架(僅 `/healthz`,供驗證本機環境串接,Phase 1.1 會替換為正式進入點)
+- [x] 已用 `poetry run uvicorn` 本機驗證 `/healthz` 回 200、`poetry run pytest` 可正常執行(0 個測試)
+- [x] Docker Desktop WSL integration 已開啟,`docker compose build` + `up -d` 實測通過:容器內 `/healthz` 回 200、`--reload` 開發模式與 `.env` 環境變數注入皆正常,驗證後已 `docker compose down` 清理
+- [x] `.gitignore` 補上 `.venv/`、`__pycache__/`、`.pytest_cache/`、`.env`(`.env.example` 維持進版控)
+
+### 雲端帳號設定(待使用者執行,需登入個人帳號,Claude 無法代為操作)
 - [ ] 建立 Google Cloud 專案
 - [ ] 啟用 Sheets API + Drive API
 - [ ] 設定 OAuth 同意畫面(**測試模式**,把每位親友 Gmail 加入「測試使用者」清單,上限約 100 人)
@@ -25,9 +37,6 @@
 - [ ] 建立 Google Cloud Firestore(NoSQL 文件資料庫,存放 `friends/{line_user_id}` 對照表與 `system/scheduler` 排程狀態)
 - [ ] 建立 Render 服務(免費方案,**選 Singapore 機房**降低台灣延遲),確認當下實際免費額度規則(運行時數上限、LINE push 月配額)(部署平台決策見 ADR-020)
 - [ ] 設定外部 Cron(如 cron-job.org),每 10 分鐘呼叫 `/tick`,**時區指定 Asia/Taipei**
-- [ ] 建立本機開發環境:`Dockerfile` + `docker-compose.yml`(與 Render 部署環境一致,Dockerfile 內安裝 Poetry)
-- [ ] 用 **Poetry** 初始化專案(`pyproject.toml` 鎖定 Python 版本與依賴、`poetry.lock`),取代 `requirements.txt`;建立 `.env.example`
-- [ ] 環境變數規劃:LINE channel secret、Google OAuth client、Firestore 服務帳號金鑰、加密金鑰、`ADMIN_LINE_USER_ID`
 
 ---
 
@@ -172,5 +181,5 @@
 
 ## 下次可從哪裡接續
 
-1. 啟動 **Phase 0**:依上方清單逐項建立 Google Cloud 專案、OAuth 同意畫面、LINE Channel、Firestore、Render 服務、外部 Cron、本機 Docker 開發環境。
-2. Phase 0 完成後接續 **Phase 1**,建議依架構文件的模組順序實作:先 `parser.py` + `pnl_engine.py`(純邏輯、易單元測試)→ `oauth_service.py` + `sheets_client.py` → `line_webhook.py` 串接 → `tick.py` 排程 → `liff.py`。
+1. **使用者本人**完成 Phase 0 剩下唯一的區塊:雲端帳號設定清單(GCP 專案、OAuth 同意畫面、LINE Channel、Firestore、Render 服務、外部 Cron)。本機開發環境(Poetry/Docker)已全部驗證完成。
+2. Phase 0 雲端帳號到位後接續 **Phase 1**,建議依架構文件的模組順序實作:先 `parser.py` + `pnl_engine.py`(純邏輯、易單元測試)→ `oauth_service.py` + `sheets_client.py` → `line_webhook.py` 串接 → `tick.py` 排程 → `liff.py`。

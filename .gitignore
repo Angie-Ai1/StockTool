@@ -4,3 +4,13 @@ log.md
 .claude/
 logs/
 CLAUDE.md
+Instruction/
+
+# Python / Poetry
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 環境變數(含機密),只保留 .env.example 進版控
+.env
