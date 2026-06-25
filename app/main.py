@@ -8,6 +8,6 @@ from fastapi import FastAPI
 app = FastAPI(title="Stocktool")
 
 
-@app.get("/health")
+@app.get("/health")  # not /healthz — Cloud Run's default *.run.app domain reserves that exact path and never forwards it to the container
 def health() -> dict[str, str]:
     return {"status": "ok"}
