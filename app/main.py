@@ -8,6 +8,6 @@ from fastapi import FastAPI
 app = FastAPI(title="Stocktool")
 
 
-@app.get("/healthz")
-def healthz() -> dict[str, str]:
+@app.get("/health")
+def health() -> dict[str, str]:
     return {"status": "ok"}
