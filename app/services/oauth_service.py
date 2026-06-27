@@ -19,6 +19,11 @@ from app.models.schemas import FriendRecord, FriendStatus
 GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
+# requests-oauthlib >= 2.0 在 authorization_url() 時自動生成 PKCE code_verifier，
+# 存在 oauth2session._code_verifier。換 token 時需帶回，但兩次呼叫用不同 Flow 物件，
+# 因此在這裡跨請求暫存，以 LINE user ID（state）為 key，token exchange 後自動清除。
+_pending_code_verifiers: dict[str, str] = {}
+
 SCOPES = [
     # 範本擁有者是管理員帳號,親友尚未透過檔案挑選器「開啟」過範本,
     # 較窄的 drive.file 範圍涵蓋不到「複製別人擁有的檔案」這個操作,
@@ -59,12 +64,15 @@ def build_authorization_url(line_user_id: str) -> str:
     url, _state = flow.authorization_url(
         access_type="offline", prompt="consent", state=line_user_id
     )
+    verifier = getattr(flow.oauth2session, "_code_verifier", None)
+    if verifier:
+        _pending_code_verifiers[line_user_id] = verifier
     return url
 
 
-def exchange_code_for_credentials(code: str) -> Credentials:
+def exchange_code_for_credentials(code: str, code_verifier: str | None = None) -> Credentials:
     flow = create_oauth_flow()
-    flow.fetch_token(code=code)
+    flow.fetch_token(code=code, **( {"code_verifier": code_verifier} if code_verifier else {}))
     return flow.credentials
 
 
@@ -100,7 +108,7 @@ def link_friend_account(
     line_user_id: str,
     code: str,
     *,
-    credentials_exchanger: Callable[[str], Credentials] = exchange_code_for_credentials,
+    credentials_exchanger: Callable[[str, str | None], Credentials] = exchange_code_for_credentials,
     template_copier: Callable[[Credentials, str], str] | None = None,
     firestore_client=None,
 ) -> FriendRecord:
@@ -116,7 +124,8 @@ def link_friend_account(
 
         template_copier = copy_template_to_drive
 
-    credentials = credentials_exchanger(code)
+    code_verifier = _pending_code_verifiers.pop(line_user_id, None)
+    credentials = credentials_exchanger(code, code_verifier)
     spreadsheet_id = template_copier(credentials, get_settings().google_sheets_template_id)
     friend = FriendRecord(
         line_user_id=line_user_id,

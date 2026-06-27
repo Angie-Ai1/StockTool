@@ -74,7 +74,7 @@ def test_link_friend_account_orchestrates_exchange_copy_and_firestore_write():
         firestore_client=fake_firestore_client,
     )
 
-    fake_exchanger.assert_called_once_with("auth-code")
+    fake_exchanger.assert_called_once_with("auth-code", None)
     fake_copier.assert_called_once_with(fake_credentials, "dummy-template-id")
     assert friend.line_user_id == "U123456"
     assert friend.spreadsheet_id == "new-spreadsheet-id"
