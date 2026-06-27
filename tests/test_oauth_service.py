@@ -19,6 +19,13 @@ DUMMY_SETTINGS = Settings(
 
 
 @pytest.fixture(autouse=True)
+def clear_pending_code_verifiers():
+    oauth_service._pending_code_verifiers.clear()
+    yield
+    oauth_service._pending_code_verifiers.clear()
+
+
+@pytest.fixture(autouse=True)
 def _dummy_settings(monkeypatch):
     monkeypatch.setattr(oauth_service, "get_settings", lambda: DUMMY_SETTINGS)
 

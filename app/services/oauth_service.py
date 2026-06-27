@@ -64,7 +64,7 @@ def build_authorization_url(line_user_id: str) -> str:
     url, _state = flow.authorization_url(
         access_type="offline", prompt="consent", state=line_user_id
     )
-    verifier = getattr(flow.oauth2session, "_code_verifier", None)
+    verifier = getattr(flow, "code_verifier", None)
     if verifier:
         _pending_code_verifiers[line_user_id] = verifier
     return url
@@ -72,7 +72,9 @@ def build_authorization_url(line_user_id: str) -> str:
 
 def exchange_code_for_credentials(code: str, code_verifier: str | None = None) -> Credentials:
     flow = create_oauth_flow()
-    flow.fetch_token(code=code, **( {"code_verifier": code_verifier} if code_verifier else {}))
+    if code_verifier:
+        flow.code_verifier = code_verifier
+    flow.fetch_token(code=code)
     return flow.credentials
 
 
