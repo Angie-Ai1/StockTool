@@ -448,4 +448,114 @@ def delete_transaction_rows(
             body={"requests": delete_requests},
         ).execute()
 
+
+def create_account_tab(
+    friend: FriendRecord,
+    tab_name: str,
+    *,
+    credentials_builder=build_credentials_from_encrypted_refresh_token,
+    refresher=refresh_or_raise,
+    sheets_service_builder=lambda credentials: build(
+        "sheets", "v4", credentials=credentials, cache_discovery=False
+    ),
+    firestore_client=None,
+) -> None:
+    """在親友試算表新增帳戶分頁並套用標準格式(凍結標題、資料驗證、欄寬、隱藏 UUID 欄)。
+
+    新分頁自動寫入 REQUIRED_HEADERS 並更新 Firestore account_tabs_cache。
+    分頁名稱重複或含非法字元時 Sheets API 會回 HttpError(400),由呼叫端處理。
+    """
+    credentials = credentials_builder(friend.encrypted_refresh_token)
+    try:
+        refresher(credentials)
+    except OAuthInvalidGrantError:
+        mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
+        raise
+
+    service = sheets_service_builder(credentials)
+
+    # 新增分頁，取得 sheetId
+    response = service.spreadsheets().batchUpdate(
+        spreadsheetId=friend.spreadsheet_id,
+        body={"requests": [{"addSheet": {"properties": {"title": tab_name}}}]},
+    ).execute()
+    sheet_id = response["replies"][0]["addSheet"]["properties"]["sheetId"]
+
+    # 寫入標題列
+    service.spreadsheets().values().update(
+        spreadsheetId=friend.spreadsheet_id,
+        range=f"'{tab_name}'!A1:G1",
+        valueInputOption="RAW",
+        body={"values": [list(REQUIRED_HEADERS)]},
+    ).execute()
+
+    # 套用格式：凍結、標題樣式、資料驗證、狀態欄底色、隱藏 UUID 欄、欄寬
+    def _hex(h: str) -> dict:
+        h = h.lstrip("#")
+        return {"red": int(h[0:2], 16) / 255, "green": int(h[2:4], 16) / 255, "blue": int(h[4:6], 16) / 255}
+
+    def _col(start: int, end: int) -> dict:
+        return {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": start, "endIndex": end}
+
+    def _cells(r0: int, r1: int, c0: int, c1: int) -> dict:
+        return {"sheetId": sheet_id, "startRowIndex": r0, "endRowIndex": r1, "startColumnIndex": c0, "endColumnIndex": c1}
+
+    format_requests: list[dict] = [
+        {"updateSheetProperties": {
+            "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}},
+            "fields": "gridProperties.frozenRowCount",
+        }},
+        {"repeatCell": {
+            "range": _cells(0, 1, 0, 7),
+            "cell": {"userEnteredFormat": {
+                "backgroundColor": _hex("EFEFEF"),
+                "textFormat": {"bold": True},
+            }},
+            "fields": "userEnteredFormat(backgroundColor,textFormat.bold)",
+        }},
+        {"setDataValidation": {
+            "range": _cells(1, 1000, 2, 3),
+            "rule": {
+                "condition": {"type": "ONE_OF_LIST", "values": [
+                    {"userEnteredValue": "買進"},
+                    {"userEnteredValue": "賣出"},
+                    {"userEnteredValue": "股息"},
+                    {"userEnteredValue": "配股"},
+                ]},
+                "showCustomUi": True,
+                "strict": True,
+            },
+        }},
+        {"repeatCell": {
+            "range": _cells(1, 1000, 6, 7),
+            "cell": {"userEnteredFormat": {"backgroundColor": _hex("F5F5F5")}},
+            "fields": "userEnteredFormat.backgroundColor",
+        }},
+        {"updateDimensionProperties": {
+            "range": _col(0, 1),
+            "properties": {"hiddenByUser": True},
+            "fields": "hiddenByUser",
+        }},
+    ]
+    for col, px in [(1, 90), (2, 70), (3, 150), (4, 90), (5, 90)]:
+        format_requests.append({"updateDimensionProperties": {
+            "range": _col(col, col + 1),
+            "properties": {"pixelSize": px},
+            "fields": "pixelSize",
+        }})
+
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=friend.spreadsheet_id,
+        body={"requests": format_requests},
+    ).execute()
+
+    # Firestore cache：把新分頁名稱加入已辨識的帳戶清單
+    existing = list(friend.account_tabs_cache or [])
+    if tab_name not in existing:
+        update_account_tabs_cache(
+            friend.line_user_id,
+            existing + [tab_name],
+            firestore_client=firestore_client,
+        )
+
     return total_deleted

@@ -6,8 +6,10 @@ _handle_text_message() 完整流程:
   2. needs_reauth → 重新授權 URL
   3. 「❌ 刪除上一筆」→ 撤銷上一次記帳(5 分鐘內有效)
   4. 「查詢」→ 回覆目前庫存/損益摘要
-  5. 多帳戶未標籤 → Quick Reply 詢問帳戶(5 分鐘有效期)
-  6. 已連結(含 Quick Reply 選擇回應) → parse → fuzzy match → 賣超防呆 → 寫入試算表 → 回覆(含撤銷 Quick Reply)
+  5. 「立即同步」→ 重新計算並寫回試算表狀態欄
+  6. 「新增帳戶 <名稱>」→ 建立新帳戶分頁
+  7. 多帳戶未標籤 → Quick Reply 詢問帳戶(5 分鐘有效期)
+  8. 已連結(含 Quick Reply 選擇回應) → parse → fuzzy match → 賣超防呆 → 寫入試算表 → 回覆(含撤銷 Quick Reply)
 """
 
 import time
@@ -48,6 +50,7 @@ from app.services.parser import parse_transaction_text
 from app.services.pnl_engine import InsufficientPositionError, apply_transaction, compute_unrealized_pnl
 from app.services.sheets_client import (
     append_transaction_row,
+    create_account_tab,
     delete_transaction_rows,
     read_tab_positions,
     resync,
@@ -397,6 +400,46 @@ def _handle_query(reply_token: str, friend: FriendRecord) -> None:
     _reply_text(reply_token, _format_query_reply(result, name_map, price_map))
 
 
+def _handle_sync(reply_token: str, friend: FriendRecord) -> None:
+    """立即同步：重新計算試算表損益並寫回狀態欄"""
+    _clear_pending(friend.line_user_id)
+    stock_list = get_cached_stock_list()
+    try:
+        resync(friend, stock_list)
+    except OAuthInvalidGrantError:
+        url = build_authorization_url(friend.line_user_id)
+        _reply_text(reply_token, f"試算表授權已過期，需要重新連結：{url}")
+        return
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            url = build_authorization_url(friend.line_user_id)
+            _reply_text(reply_token, f"找不到試算表（可能已被刪除），需要重新連結：{url}")
+        else:
+            _reply_text(reply_token, "同步失敗，請稍後再試")
+        return
+    _reply_text(reply_token, "✅ 同步完成！試算表狀態欄已更新。")
+
+
+def _handle_add_tab(reply_token: str, friend: FriendRecord, tab_name: str) -> None:
+    """新增帳戶分頁：建立符合規格的新分頁並套用標準格式"""
+    try:
+        create_account_tab(friend, tab_name)
+    except OAuthInvalidGrantError:
+        url = build_authorization_url(friend.line_user_id)
+        _reply_text(reply_token, f"試算表授權已過期，需要重新連結：{url}")
+        return
+    except HttpError as exc:
+        if exc.resp.status == 400:
+            _reply_text(reply_token, f"「{tab_name}」無法使用（名稱重複或含不允許的字元），請換一個名稱")
+        else:
+            _reply_text(reply_token, "新增分頁失敗，請稍後再試")
+        return
+    _reply_text(
+        reply_token,
+        f"✅ 已新增帳戶分頁「{tab_name}」！\n記帳時輸入帳戶標籤（例如：買 台積電 100 85000 #{tab_name}）可直接寫入此分頁。",
+    )
+
+
 # ── 說明文字 ──────────────────────────────────────────────────────────────────
 
 _DISCLAIMER = "⚠️ 本工具僅供個人記帳參考，非正式對帳或報稅依據。"
@@ -506,6 +549,16 @@ def _handle_text_message(event: MessageEvent) -> None:
         return
     if text == "查詢":
         _handle_query(event.reply_token, friend)
+        return
+    if text == "立即同步":
+        _handle_sync(event.reply_token, friend)
+        return
+    if text.startswith("新增帳戶"):
+        tab_name = text.removeprefix("新增帳戶").strip()
+        if not tab_name:
+            _reply_text(event.reply_token, "請輸入帳戶名稱，例如：新增帳戶 海外股")
+            return
+        _handle_add_tab(event.reply_token, friend, tab_name)
         return
 
     # 先檢查是否為多帳戶 Quick Reply 的帳戶選擇回應
