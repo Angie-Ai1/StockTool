@@ -160,3 +160,45 @@ def test_liff_summary_falls_back_to_needs_reauth_on_sheets_404(client, monkeypat
 
     assert response.status_code == 200
     assert response.json() == {"linked": True, "status": "needs_reauth", "accounts": []}
+
+
+# --- POST /sheets/sync -----------------------------------------------------------
+
+
+def test_sheets_sync_returns_ok_for_valid_spreadsheet(client, monkeypatch):
+    monkeypatch.setattr(liff, "get_friend_by_spreadsheet_id", MagicMock(return_value=_friend()))
+    monkeypatch.setattr(liff, "get_cached_stock_list", MagicMock(return_value=[]))
+    monkeypatch.setattr(liff, "resync", MagicMock(return_value=MagicMock()))
+
+    response = client.post("/sheets/sync", json={"spreadsheet_id": "sheet-1"})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_sheets_sync_returns_404_for_unknown_spreadsheet(client, monkeypatch):
+    monkeypatch.setattr(liff, "get_friend_by_spreadsheet_id", MagicMock(return_value=None))
+
+    response = client.post("/sheets/sync", json={"spreadsheet_id": "no-such-sheet"})
+
+    assert response.status_code == 404
+
+
+def test_sheets_sync_returns_401_for_needs_reauth_friend(client, monkeypatch):
+    monkeypatch.setattr(
+        liff, "get_friend_by_spreadsheet_id", MagicMock(return_value=_friend(FriendStatus.NEEDS_REAUTH))
+    )
+
+    response = client.post("/sheets/sync", json={"spreadsheet_id": "sheet-1"})
+
+    assert response.status_code == 401
+
+
+def test_sheets_sync_returns_401_on_oauth_invalid_grant(client, monkeypatch):
+    monkeypatch.setattr(liff, "get_friend_by_spreadsheet_id", MagicMock(return_value=_friend()))
+    monkeypatch.setattr(liff, "get_cached_stock_list", MagicMock(return_value=[]))
+    monkeypatch.setattr(liff, "resync", MagicMock(side_effect=OAuthInvalidGrantError("boom")))
+
+    response = client.post("/sheets/sync", json={"spreadsheet_id": "sheet-1"})
+
+    assert response.status_code == 401

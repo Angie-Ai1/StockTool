@@ -93,3 +93,30 @@ def test_list_active_friends_returns_empty_list_when_none_match():
     fake_client.collection.return_value.where.return_value.stream.return_value = []
 
     assert friend_repository.list_active_friends(firestore_client=fake_client) == []
+
+
+def test_get_friend_by_spreadsheet_id_returns_friend_when_found():
+    fake_client = MagicMock()
+    doc = MagicMock()
+    doc.to_dict.return_value = {
+        "line_user_id": "U123456",
+        "spreadsheet_id": "sheet-abc",
+        "encrypted_refresh_token": "enc",
+        "status": "active",
+    }
+    fake_client.collection.return_value.where.return_value.limit.return_value.stream.return_value = [doc]
+
+    friend = friend_repository.get_friend_by_spreadsheet_id("sheet-abc", firestore_client=fake_client)
+
+    assert friend is not None
+    assert friend.line_user_id == "U123456"
+    assert friend.spreadsheet_id == "sheet-abc"
+
+
+def test_get_friend_by_spreadsheet_id_returns_none_when_not_found():
+    fake_client = MagicMock()
+    fake_client.collection.return_value.where.return_value.limit.return_value.stream.return_value = []
+
+    friend = friend_repository.get_friend_by_spreadsheet_id("no-such-sheet", firestore_client=fake_client)
+
+    assert friend is None

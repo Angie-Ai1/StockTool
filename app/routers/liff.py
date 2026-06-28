@@ -13,6 +13,7 @@ MVP 範圍只回應一個摘要端點:登入連結狀態、目前庫存列表、
 import httpx
 from fastapi import APIRouter, Header, HTTPException
 from googleapiclient.errors import HttpError
+from pydantic import BaseModel
 
 from app.config import get_settings
 from app.models.schemas import (
@@ -24,7 +25,7 @@ from app.models.schemas import (
     StockQuote,
 )
 from app.routers.tick import get_cached_stock_list
-from app.services.friend_repository import get_friend_record
+from app.services.friend_repository import get_friend_by_spreadsheet_id, get_friend_record
 from app.services.oauth_service import OAuthInvalidGrantError
 from app.services.pnl_engine import compute_unrealized_pnl
 from app.services.sheets_client import resync
@@ -75,6 +76,29 @@ def _to_position_summary(position: Position, stock: StockQuote | None) -> Positi
         closing_price=stock.close if stock is not None else None,
         unrealized_pnl=unrealized_pnl,
     )
+
+
+class SyncRequest(BaseModel):
+    spreadsheet_id: str
+
+
+@router.post("/sheets/sync")
+def sheets_sync(body: SyncRequest) -> dict[str, str]:
+    """由試算表「操作面板」Apps Script 呼叫，以 spreadsheet_id 識別使用者並觸發 resync——規格 1.8"""
+    friend = get_friend_by_spreadsheet_id(body.spreadsheet_id)
+    if friend is None:
+        raise HTTPException(status_code=404, detail="試算表未連結")
+    if friend.status is FriendStatus.NEEDS_REAUTH:
+        raise HTTPException(status_code=401, detail="需要重新授權")
+    try:
+        resync(friend, get_cached_stock_list())
+    except OAuthInvalidGrantError:
+        raise HTTPException(status_code=401, detail="需要重新授權")
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            raise HTTPException(status_code=404, detail="試算表不存在") from exc
+        raise HTTPException(status_code=500, detail="試算表同步失敗") from exc
+    return {"status": "ok"}
 
 
 @router.get("/liff/summary")

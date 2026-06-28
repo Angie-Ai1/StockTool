@@ -49,6 +49,20 @@ def update_account_tabs_cache(line_user_id: str, tab_names: list[str], firestore
     client.collection("friends").document(line_user_id).update({"account_tabs_cache": tab_names})
 
 
+def get_friend_by_spreadsheet_id(spreadsheet_id: str, firestore_client=None) -> FriendRecord | None:
+    """依試算表 ID 查親友記錄——/sheets/sync 端點用，以 spreadsheet_id 識別呼叫者"""
+    client = firestore_client or get_firestore_client()
+    docs = list(
+        client.collection("friends")
+        .where(filter=FieldFilter("spreadsheet_id", "==", spreadsheet_id))
+        .limit(1)
+        .stream()
+    )
+    if not docs:
+        return None
+    return FriendRecord.model_validate(docs[0].to_dict())
+
+
 def list_active_friends(firestore_client=None) -> list[FriendRecord]:
     """14:30 排程逐位 resync 用,只挑 active 狀態——inactive(已封鎖)/needs_reauth(待重新連結)
     的親友這次先跳過,不會無意義地嘗試一個已知會失敗或不該再服務的帳號,規格 1.9"""
