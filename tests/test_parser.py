@@ -53,7 +53,7 @@ def test_sell_uses_same_field_order_as_buy():
 
 
 def test_cash_dividend_format():
-    result = parse_transaction_text("股息 華邦電 500元")
+    result = parse_transaction_text("配息 華邦電 500元")
     txn = result.transactions[0]
     assert txn.action is TransactionAction.DIVIDEND
     assert txn.stock_query == "華邦電"

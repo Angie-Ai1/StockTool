@@ -532,7 +532,7 @@ def create_account_tab(
                 "condition": {"type": "ONE_OF_LIST", "values": [
                     {"userEnteredValue": "買進"},
                     {"userEnteredValue": "賣出"},
-                    {"userEnteredValue": "股息"},
+                    {"userEnteredValue": "配息"},
                     {"userEnteredValue": "配股"},
                 ]},
                 "showCustomUi": True,

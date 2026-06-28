@@ -16,7 +16,7 @@ ACTION_KEYWORDS: dict[str, TransactionAction] = {
     "買進": TransactionAction.BUY,
     "賣": TransactionAction.SELL,
     "賣出": TransactionAction.SELL,
-    "股息": TransactionAction.DIVIDEND,
+    "配息": TransactionAction.DIVIDEND,
     "配股": TransactionAction.STOCK_DIVIDEND,
 }
 
@@ -68,7 +68,7 @@ def _parse_line(line: str, closing_price_lookup: ClosingPriceLookup | None) -> P
     action_keyword = tokens[0]
     action = ACTION_KEYWORDS.get(action_keyword)
     if action is None:
-        raise ValueError(f"無法辨識的動作關鍵字「{action_keyword}」,請用 買/賣/股息/配股")
+        raise ValueError(f"無法辨識的動作關鍵字「{action_keyword}」,請用 買/賣/配息/配股")
 
     rest = tokens[1:]
 
@@ -105,7 +105,7 @@ def _parse_line(line: str, closing_price_lookup: ClosingPriceLookup | None) -> P
 
     if action is TransactionAction.DIVIDEND:
         if len(rest) != 2:
-            raise ValueError("格式不符,股息需要「個股 金額」")
+            raise ValueError("格式不符,配息需要「個股 金額」")
         stock_query, amount_token = rest
         amount = _parse_amount(amount_token)
         return ParsedTransaction(

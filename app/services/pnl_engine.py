@@ -51,11 +51,11 @@ def apply_stock_dividend(position: Position, quantity: Decimal) -> Position:
 
 
 def apply_cash_dividend(position: Position, amount: Decimal) -> Position:
-    """股息:扣減整體投入本金,均價隨之下降,股數不變 — 規格 5.4"""
+    """配息:扣減整體投入本金,均價隨之下降,股數不變 — 規格 5.4"""
     if amount <= 0:
         raise ValueError("金額必須大於 0")
     if position.quantity <= 0:
-        raise ValueError("目前無庫存,無法套用股息")
+        raise ValueError("目前無庫存,無法套用配息")
     total_cost = position.avg_cost * position.quantity - amount
     return position.model_copy(update={"avg_cost": total_cost / position.quantity})
 

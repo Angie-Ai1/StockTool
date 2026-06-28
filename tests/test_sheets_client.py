@@ -111,7 +111,7 @@ def test_resync_account_tab_skips_blank_row():
 def test_resync_account_tab_applies_cash_dividend():
     rows = [
         _row(action="買", stock="2330", quantity="10", amount="6000"),
-        _row(action="股息", stock="2330", amount="500"),
+        _row(action="配息", stock="2330", amount="500"),
     ]
     positions, statuses = sheets_client.resync_account_tab(rows, HEADER_INDEX, STOCK_LIST)
 
