@@ -1,6 +1,6 @@
 # LINE 股市記帳小工具 — 開發進度
 
-> 最後更新：2026-06-26 03:20
+> 最後更新：2026-06-29 02:23
 
 ## 整體進度
 
@@ -8,10 +8,10 @@
 |---|---|---|
 | 規格設計（Phase 1 MVP） | 100% | 已定案 |
 | 規格設計（Phase 2~8） | 約 70% | 功能範圍已定，部分細節待展開 |
-| Phase 0 基礎設施 | 97% | 僅缺 `ADMIN_LINE_USER_ID`；Firestore Secret Manager ✅、`GOOGLE_SHEETS_TEMPLATE_ID` ✅ |
-| Phase 1 MVP 程式碼 | 83%（40/48） | 新增 `oauth_callback.py`，測試升至 122/122（11 個測試檔） |
-| 部署上線：基礎設施 | 100% | Cloud Run 五條路由全上線 |
-| 部署上線：功能 | 85% | 所有 Phase 1 已完成程式碼已 push；尚未做真實 LINE 端對端測試 |
+| Phase 0 基礎設施 | 97% | 僅缺 `ADMIN_LINE_USER_ID` |
+| Phase 1 MVP 程式碼 | ~88%（約 42/48） | 1.8 部分完成、立即同步/新增帳戶指令上線 |
+| 部署上線：基礎設施 | 100% | Cloud Run + Cloud Build CD 正常 |
+| 部署上線：功能 | ~85% | 記帳/撤銷/查詢/同步端對端驗證通過；LIFF OAuth 行動裝置修復中（debug 進行中） |
 
 ---
 
@@ -31,23 +31,23 @@
 
 ---
 
-## Phase 1 — MVP 程式碼（83%，40/48）
+## Phase 1 — MVP 程式碼（~88%，約 42/48）
 
-| 狀態 | 項目 |
-|---|---|
-| ✅ | 1.1 專案骨架（`main.py` 掛載四個 router） |
-| ✅ | 1.2 LINE Webhook（簽章驗證、事件去重、follow/unfollow、記帳寫入） |
-| ✅ | 1.3 OAuth 與試算表建立（含 `/oauth/callback` 路由，本次完成） |
-| ✅ | 1.4 記帳文字解析（parser + fuzzy_match + 多帳戶 Quick Reply） |
-| ✅ | 1.5 損益引擎（移動加權平均、已實現/未實現損益、賣超防呆） |
-| 🔄 | 1.6 試算表 resync（2/3，缺操作面板「立即同步」按鈕） |
-| ⬜ | 1.7 防呆撤銷與查詢（記帳後 Quick Reply 刪除、Rich Menu 查詢） |
-| ⬜ | 1.8 首次使用引導與操作面板 |
-| ✅ | 1.9 排程（`/tick`，共享密鑰驗證，14:30 收盤任務） |
-| ⬜ | 1.10 共用通知元件 |
-| ✅ | 1.11 LIFF 網頁（id_token 驗證、`/liff/summary`） |
-| ⬜ | 1.12 溫度感文案 |
-| ✅ | 1.13 測試（11 個測試檔，122 案例全數通過） |
+| 狀態 | 項目 | 備註 |
+|---|---|---|
+| ✅ | 1.1 專案骨架 | `main.py` 掛載四個 router |
+| ✅ | 1.2 LINE Webhook | 簽章驗證、事件去重、follow/unfollow、記帳寫入 |
+| ✅ | 1.3 OAuth 與試算表建立 | 含 `/oauth/callback`，OAuth 完成後立即 resync 填好帳戶快取，使用者連結後可直接記帳 |
+| ✅ | 1.4 記帳文字解析 | parser + fuzzy_match + 多帳戶 Quick Reply |
+| ✅ | 1.5 損益引擎 | 移動加權平均、已實現/未實現損益、賣超防呆 |
+| ✅ | 1.6 試算表 resync | resync + `立即同步` LINE 指令 + `POST /sheets/sync` 端點 |
+| ✅ | 1.7 防呆撤銷與查詢 | 撤銷上一筆 + Rich Menu 查詢 |
+| 🔄 | 1.8 首次使用引導與操作面板 | follow 歡迎訊息 ✅、使用說明指令 ✅、操作面板分頁 ✅；首次使用流程引導待確認 |
+| ✅ | 1.9 排程 | `/tick`，共享密鑰驗證，14:30 收盤任務 |
+| ⬜ | 1.10 共用通知元件 | 未開始 |
+| ✅ | 1.11 LIFF 網頁 | id_token 驗證、`/liff/summary` |
+| ⬜ | 1.12 溫度感文案 | 未開始 |
+| ✅ | 1.13 測試 | 148 案例全數通過 |
 
 ---
 
@@ -58,13 +58,21 @@
 | `GET /health` | ✅ 200 |
 | `POST /line/webhook` | ✅ 簽章驗證正常 |
 | `GET /liff/summary` | ✅ Bearer token 驗證正常 |
-| `GET /oauth/callback` | ✅ 本次新增部署 |
+| `GET /oauth/callback` | ✅ 正常 |
 | `POST /tick` | ✅ 共享密鑰驗證正常 |
+| `POST /sheets/sync` | ✅ 供試算表操作面板呼叫 |
+| `GET /oauth/liff` | ✅ LIFF 授權頁面（LIFF ID 由 settings 注入） |
+| `GET /oauth/url` | ✅ LIFF 用，驗 id_token 後回傳 Google auth URL |
 
 ---
 
 ## 下次接續
 
-1. **LINE 端對端測試**（最優先）：加官方帳號好友 → 傳訊息 → 點 OAuth 連結 → 試算表連結成功
-2. **1.7 防呆撤銷與查詢**：記帳成功後 Quick Reply 刪除上一筆 + Rich Menu 查詢，完成後 MVP 記帳迴圈完全閉合
-3. 試算表範本完善（`Instruction/claude_cowork.md` 任務 1）
+1. **⚠️ LIFF OAuth debug（最優先）**：
+   - 確認 Cloud Run 環境變數：`LIFF_ID=2010536089-8QsckdO0`、`LINE_LOGIN_CHANNEL_ID=2010536089` 兩個都要有值
+   - 「系統發生問題」若確認是 LIFF_ID 遺失 → 補回後重部署
+   - 測試通過後，移除 debug code（`logs/2026-06-29_0144.md` 有完整 debug commit 清單）
+2. **試算表手動修復**：把目前已壞掉的試算表 row 1 資料剪下貼回 row 2 下方，讓標題列回到 row 1，再傳「查詢」重新同步
+3. **端對端驗證**：記帳/撤銷/查詢/同步完整流程（手機端）
+4. **1.10 共用通知元件** / **1.12 溫度感文案**（Phase 1 剩餘項目）
+5. 後續 LIFF 動態網頁（圖表 + 篩選 + 搜尋）為獨立前端專案
