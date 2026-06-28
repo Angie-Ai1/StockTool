@@ -397,13 +397,76 @@ def _handle_query(reply_token: str, friend: FriendRecord) -> None:
     _reply_text(reply_token, _format_query_reply(result, name_map, price_map))
 
 
+# ── 說明文字 ──────────────────────────────────────────────────────────────────
+
+_DISCLAIMER = "⚠️ 本工具僅供個人記帳參考，非正式對帳或報稅依據。"
+
+_FORMAT_GUIDE = (
+    "記帳格式：\n"
+    "・買進：買 台積電 100 85000\n"
+    "・賣出：賣 2330 100 90000\n"
+    "・股息：股息 台積電 5000\n"
+    "・配股：配股 台積電 100"
+)
+
+
+def _build_welcome_new_text(oauth_url: str) -> str:
+    return (
+        "嗨！我是你的記帳小幫手 📊\n"
+        "\n"
+        "首先，點這裡連結你自己的記帳試算表：\n"
+        f"{oauth_url}\n"
+        "\n"
+        "連結完成後就可以開始記帳囉！\n"
+        f"{_FORMAT_GUIDE}\n"
+        "\n"
+        "隨時傳「使用說明」可再看一次 😊\n"
+        "\n"
+        f"{_DISCLAIMER}"
+    )
+
+
+def _build_welcome_back_text() -> str:
+    return (
+        "歡迎回來！試算表還在，直接繼續記帳沒問題 📊\n"
+        "\n"
+        f"{_FORMAT_GUIDE}\n"
+        "\n"
+        "隨時傳「使用說明」可再看一次 😊"
+    )
+
+
+def _build_usage_guide_text() -> str:
+    return (
+        "📊 記帳格式說明\n"
+        "\n"
+        "【買賣】買/賣 股票 數量 總金額\n"
+        "【股利】股息 股票 金額\n"
+        "【配股】配股 股票 股數\n"
+        "\n"
+        "範例：\n"
+        "買 台積電 100 85000\n"
+        "賣 2330 50 48000\n"
+        "股息 0050 3000\n"
+        "\n"
+        "傳「查詢」或按選單「查詢」看持股損益\n"
+        "多筆請分行，一次傳送即可\n"
+        "\n"
+        f"{_DISCLAIMER}"
+    )
+
+
 # ── 事件處理 ──────────────────────────────────────────────────────────────────
 
 def _handle_follow_event(event: FollowEvent) -> None:
     line_user_id = event.source.user_id
     friend = get_friend_record(line_user_id)
-    if friend is not None and friend.status == FriendStatus.INACTIVE:
+    if friend is None:
+        url = build_authorization_url(line_user_id)
+        _reply_text(event.reply_token, _build_welcome_new_text(url))
+    elif friend.status == FriendStatus.INACTIVE:
         reactivate_friend(line_user_id)
+        _reply_text(event.reply_token, _build_welcome_back_text())
 
 
 def _handle_unfollow_event(event: UnfollowEvent) -> None:
@@ -417,14 +480,24 @@ def _handle_text_message(event: MessageEvent) -> None:
     text = event.message.text.strip()
 
     friend = get_friend_record(line_user_id)
+
+    # 使用說明優先回覆，不論是否已連結——規格 1.8
+    if text == "使用說明":
+        guide = _build_usage_guide_text()
+        if friend is None or friend.status == FriendStatus.NEEDS_REAUTH:
+            url = build_authorization_url(line_user_id)
+            guide += f"\n\n連結試算表：{url}"
+        _reply_text(event.reply_token, guide)
+        return
+
     if friend is None:
         url = build_authorization_url(line_user_id)
-        _reply_text(event.reply_token, f"還沒有連結你自己的記帳試算表喔,點這裡授權一下:{url}")
+        _reply_text(event.reply_token, f"尚未連結記帳試算表,請點這裡授權:{url}")
         return
 
     if friend.status == FriendStatus.NEEDS_REAUTH:
         url = build_authorization_url(line_user_id)
-        _reply_text(event.reply_token, f"試算表授權已過期,需要重新連結才能繼續記帳:{url}")
+        _reply_text(event.reply_token, f"試算表授權已過期,請重新連結就可以繼續記帳:{url}")
         return
 
     # 特殊指令優先於記帳解析——規格 1.7

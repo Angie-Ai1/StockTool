@@ -144,21 +144,90 @@ def test_follow_event_reactivates_inactive_friend(client, monkeypatch):
     monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=inactive_friend))
     reactivate = MagicMock()
     monkeypatch.setattr(line_webhook, "reactivate_friend", reactivate)
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
 
     response = _post(client, [_follow_event("Uxxx")])
 
     assert response.status_code == 200
     reactivate.assert_called_once_with("Uxxx")
+    reply.assert_called_once()
+    assert "歡迎回來" in reply.call_args[0][1]
 
 
 def test_follow_event_new_friend_does_not_reactivate(client, monkeypatch):
     monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=None))
     reactivate = MagicMock()
     monkeypatch.setattr(line_webhook, "reactivate_friend", reactivate)
+    monkeypatch.setattr(line_webhook, "build_authorization_url", MagicMock(return_value="https://oauth.example.com"))
+    monkeypatch.setattr(line_webhook, "_reply_text", MagicMock())
 
     _post(client, [_follow_event("Uxxx")])
 
     reactivate.assert_not_called()
+
+
+def test_follow_event_new_friend_replies_with_welcome_and_oauth_url(client, monkeypatch):
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=None))
+    monkeypatch.setattr(line_webhook, "build_authorization_url", MagicMock(return_value="https://oauth.example.com"))
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    _post(client, [_follow_event("Uxxx")])
+
+    reply.assert_called_once()
+    text = reply.call_args[0][1]
+    assert "https://oauth.example.com" in text
+    assert "免責聲明" in text or "非正式" in text
+
+
+def test_follow_event_returning_friend_replies_welcome_back(client, monkeypatch):
+    inactive_friend = FriendRecord(
+        line_user_id="Uxxx",
+        spreadsheet_id="sheet-1",
+        encrypted_refresh_token="enc",
+        status=FriendStatus.INACTIVE,
+    )
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=inactive_friend))
+    monkeypatch.setattr(line_webhook, "reactivate_friend", MagicMock())
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    _post(client, [_follow_event("Uxxx")])
+
+    reply.assert_called_once()
+    assert "歡迎回來" in reply.call_args[0][1]
+
+
+def test_text_message_usage_guide_for_linked_friend(client, monkeypatch):
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    event = _message_event("Uxxx")
+    event["message"]["text"] = "使用說明"
+    _post(client, [event])
+
+    reply.assert_called_once()
+    text = reply.call_args[0][1]
+    assert "記帳格式" in text
+    assert "免責聲明" in text or "非正式" in text
+
+
+def test_text_message_usage_guide_for_unlinked_friend_includes_oauth_url(client, monkeypatch):
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=None))
+    monkeypatch.setattr(line_webhook, "build_authorization_url", MagicMock(return_value="https://oauth.example.com"))
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    event = _message_event("Uxxx")
+    event["message"]["text"] = "使用說明"
+    _post(client, [event])
+
+    reply.assert_called_once()
+    text = reply.call_args[0][1]
+    assert "記帳格式" in text
+    assert "https://oauth.example.com" in text
 
 
 def test_unfollow_event_deactivates_existing_friend(client, monkeypatch):
