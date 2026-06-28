@@ -122,7 +122,8 @@ def run_daily_close_task(
 
     global _cached_stock_list
     _cached_stock_list = fetch_stock_list_fn()
-    save_stock_list_fn(_cached_stock_list, firestore_client=client)
+    if _cached_stock_list:
+        save_stock_list_fn(_cached_stock_list, firestore_client=client)
 
     friends = list_friends_fn(firestore_client=client)
     for index, friend in enumerate(friends):

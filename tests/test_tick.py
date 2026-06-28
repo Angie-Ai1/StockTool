@@ -127,6 +127,22 @@ def test_run_daily_close_task_runs_and_marks_executed_when_due():
     assert tick.get_cached_stock_list() == stock_list
 
 
+def test_run_daily_close_task_skips_firestore_save_when_fetch_returns_empty():
+    firestore_client = MagicMock()
+    firestore_client.collection.return_value.document.return_value.get.return_value = MagicMock(exists=False)
+    save_fn = MagicMock()
+
+    tick.run_daily_close_task(
+        now=_now(14, 30),
+        firestore_client=firestore_client,
+        fetch_stock_list_fn=MagicMock(return_value=[]),
+        save_stock_list_fn=save_fn,
+        list_friends_fn=MagicMock(return_value=[]),
+    )
+
+    save_fn.assert_not_called()
+
+
 def test_save_stock_list_to_firestore_writes_correct_document():
     firestore_client = MagicMock()
     stock_list = [
