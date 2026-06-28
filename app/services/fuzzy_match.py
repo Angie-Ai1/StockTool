@@ -26,6 +26,12 @@ def resolve_stock(query: str, stock_list: list[StockQuote]) -> StockQuote:
     if query in by_code:
         return by_code[query]
 
+    # 試算表回讀路徑存的是「代碼 名稱」複合格式（如 "2408 南亞科"）：
+    # 先取第一個 token 試代碼精確比對，避免完全依賴 fuzzy 而出現誤判
+    first_token = query.split()[0]
+    if len(query.split()) > 1 and first_token in by_code:
+        return by_code[first_token]
+
     name_to_stock = {stock.name: stock for stock in stock_list}
     best_match = process.extractOne(query, name_to_stock.keys())
     if best_match is None or best_match[1] < FUZZY_MATCH_THRESHOLD:

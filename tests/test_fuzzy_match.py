@@ -35,3 +35,16 @@ def test_resolve_unknown_stock_raises_value_error_with_reason():
 def test_resolve_blank_query_raises_value_error():
     with pytest.raises(ValueError, match="不可為空白"):
         resolve_stock("   ", STOCK_LIST)
+
+
+def test_resolve_code_name_composite_format():
+    """試算表回讀時 stock_query 以「代碼 名稱」複合格式儲存，應直接比對代碼欄位"""
+    stock = resolve_stock("2330 台積電", STOCK_LIST)
+    assert stock.code == "2330"
+    assert stock.name == "台積電"
+
+
+def test_resolve_code_name_composite_different_name_still_matches_by_code():
+    """即使名稱部分與清單不完全相符，只要代碼正確就能命中"""
+    stock = resolve_stock("2330 台積電科技", STOCK_LIST)
+    assert stock.code == "2330"
