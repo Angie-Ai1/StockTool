@@ -1,11 +1,17 @@
-plan/
-openspecs/
-log.md
 .claude/
-logs/
 CLAUDE.md
+
+# Ignore file
+log.md
+progress_internal.md
+
+# Ignore personal files
+.personal/
 Instruction/
 explanation/
+plan/
+openspecs/
+logs/
 
 # Python / Poetry
 .venv/
