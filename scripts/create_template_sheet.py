@@ -17,7 +17,7 @@ SCOPES = [
 SERVICE_ACCOUNT_FILE = Path(__file__).parent.parent / "secrets" / "firestore-service-account.json"
 
 HEADER_ROW = ["row_uuid", "日期", "動作", "股票代碼/名稱", "數量", "金額", "狀態"]
-DEFAULT_TAB_NAME = "個人帳"
+DEFAULT_TAB_NAME = "個人帳戶"
 
 
 def get_credentials():
@@ -30,7 +30,7 @@ def create_template(creds) -> str:
     sheets = build("sheets", "v4", credentials=creds)
     drive = build("drive", "v3", credentials=creds)
 
-    # 建立試算表，分頁命名為「個人帳」
+    # 建立試算表，分頁命名為「個人帳戶」
     spreadsheet = sheets.spreadsheets().create(body={
         "properties": {"title": "【範本】股票記帳"},
         "sheets": [{"properties": {"title": DEFAULT_TAB_NAME}}],

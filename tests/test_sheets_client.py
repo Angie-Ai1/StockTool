@@ -401,8 +401,8 @@ def test_append_transaction_row_appends_correct_row():
     body = call_kwargs["body"]
     row = body["values"][0]
     assert row[0] == "test-uuid-1"   # row_uuid
-    assert row[1] == "2026-06-26"    # 日期
-    assert row[2] == "買"             # 動作
+    assert row[1] == "2026/06/26"    # 日期
+    assert row[2] == "買進"           # 動作
     assert row[3] == "2330 台積電"   # 股票代碼/名稱
     assert row[4] == "10"             # 數量
     assert row[5] == "6000"           # 金額

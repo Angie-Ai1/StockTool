@@ -197,7 +197,16 @@ def build_requests(sheet_id: int) -> list[dict]:
         }
     })
 
-    # 6. 欄寬調整（單位 px）
+    # 6. 日期欄（B2:B1000）：日期格式 yyyy/mm/dd
+    requests.append({
+        "repeatCell": {
+            "range": _grid_range(sheet_id, start_row=1, end_row=1000, start_col=1, end_col=2),
+            "cell": {"userEnteredFormat": {"numberFormat": {"type": "DATE", "pattern": "yyyy/mm/dd"}}},
+            "fields": "userEnteredFormat.numberFormat",
+        }
+    })
+
+    # 7. 欄寬調整（單位 px）
     # col index: 1=日期, 2=動作, 3=股票代碼/名稱, 4=數量, 5=金額
     for col_index, width_px in [(1, 90), (2, 70), (3, 150), (4, 90), (5, 90)]:
         requests.append({

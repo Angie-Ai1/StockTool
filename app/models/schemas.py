@@ -30,8 +30,8 @@ class SchedulerState(BaseModel):
 
 
 class TransactionAction(str, Enum):
-    BUY = "買"
-    SELL = "賣"
+    BUY = "買進"
+    SELL = "賣出"
     DIVIDEND = "股息"
     STOCK_DIVIDEND = "配股"
 

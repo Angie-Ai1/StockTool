@@ -88,12 +88,18 @@ def _parse_decimal(raw: str, field_name: str) -> Decimal:
         raise ValueError(f"{field_name}格式錯誤「{raw}」") from exc
 
 
+_ACTION_COMPAT = {"買": TransactionAction.BUY, "賣": TransactionAction.SELL}
+
+
 def _parse_sheet_row(row: list[str], header_index: dict[str, int]) -> TransactionRow:
     action_raw = _cell(row, header_index, "動作")
     try:
         action = TransactionAction(action_raw)
     except ValueError as exc:
-        raise ValueError(f"無法辨識的動作「{action_raw}」") from exc
+        if action_raw in _ACTION_COMPAT:
+            action = _ACTION_COMPAT[action_raw]
+        else:
+            raise ValueError(f"無法辨識的動作「{action_raw}」") from exc
 
     quantity_raw = _cell(row, header_index, "數量")
     amount_raw = _cell(row, header_index, "金額")
@@ -327,7 +333,7 @@ def append_transaction_row(
     new_row = [""] * num_cols
     field_values = {
         "row_uuid": txn.row_uuid,
-        "日期": str(txn.date),
+        "日期": txn.date.strftime("%Y/%m/%d"),
         "動作": txn.action.value,
         "股票代碼/名稱": txn.stock_query,
         "數量": str(txn.quantity) if txn.quantity is not None else "",
@@ -514,6 +520,11 @@ def create_account_tab(
                 "textFormat": {"bold": True},
             }},
             "fields": "userEnteredFormat(backgroundColor,textFormat.bold)",
+        }},
+        {"repeatCell": {
+            "range": _cells(1, 1000, 1, 2),
+            "cell": {"userEnteredFormat": {"numberFormat": {"type": "DATE", "pattern": "yyyy/mm/dd"}}},
+            "fields": "userEnteredFormat.numberFormat",
         }},
         {"setDataValidation": {
             "range": _cells(1, 1000, 2, 3),
