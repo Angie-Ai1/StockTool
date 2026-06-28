@@ -35,7 +35,7 @@ def test_build_authorization_url_carries_line_user_id_as_state():
     query = parse_qs(urlparse(url).query)
     assert query["state"] == ["U123456"]
     assert query["access_type"] == ["offline"]
-    assert query["prompt"] == ["consent"]
+    assert query["prompt"] == ["select_account consent"]
     assert set(query["scope"][0].split()) == set(oauth_service.SCOPES)
 
 
@@ -71,6 +71,7 @@ def test_link_friend_account_orchestrates_exchange_copy_and_firestore_write():
     fake_credentials = MagicMock(refresh_token="a-refresh-token")
     fake_exchanger = MagicMock(return_value=fake_credentials)
     fake_copier = MagicMock(return_value="new-spreadsheet-id")
+    fake_resyncer = MagicMock()
     fake_firestore_client = MagicMock()
 
     friend = oauth_service.link_friend_account(
@@ -78,6 +79,7 @@ def test_link_friend_account_orchestrates_exchange_copy_and_firestore_write():
         "auth-code",
         credentials_exchanger=fake_exchanger,
         template_copier=fake_copier,
+        resyncer=fake_resyncer,
         firestore_client=fake_firestore_client,
     )
 
@@ -91,3 +93,23 @@ def test_link_friend_account_orchestrates_exchange_copy_and_firestore_write():
     fake_firestore_client.collection.assert_called_once_with("friends")
     fake_firestore_client.collection.return_value.document.assert_called_once_with("U123456")
     fake_firestore_client.collection.return_value.document.return_value.set.assert_called_once()
+
+    # resync 在 Firestore 寫完後立即被呼叫，以填好 account_tabs_cache
+    fake_resyncer.assert_called_once_with(friend, [], firestore_client=fake_firestore_client)
+
+
+def test_link_friend_account_resync_failure_is_non_fatal():
+    """resync 拋例外不應中斷 OAuth 連結主流程"""
+    fake_credentials = MagicMock(refresh_token="a-refresh-token")
+    fake_resyncer = MagicMock(side_effect=Exception("sheets error"))
+
+    friend = oauth_service.link_friend_account(
+        "U123456",
+        "auth-code",
+        credentials_exchanger=MagicMock(return_value=fake_credentials),
+        template_copier=MagicMock(return_value="spreadsheet-id"),
+        resyncer=fake_resyncer,
+        firestore_client=MagicMock(),
+    )
+
+    assert friend.line_user_id == "U123456"  # 主流程正常完成

@@ -112,19 +112,25 @@ def link_friend_account(
     *,
     credentials_exchanger: Callable[[str, str | None], Credentials] = exchange_code_for_credentials,
     template_copier: Callable[[Credentials, str], str] | None = None,
+    resyncer=None,
     firestore_client=None,
 ) -> FriendRecord:
     """`/oauth/callback` 收到 code 後的完整連結流程——規格 2.2。
 
     依序:用授權碼換 token → 用親友自己的授權把範本複製進他的 Drive →
-    加密 refresh token → 寫入 Firestore 對照表。
+    加密 refresh token → 寫入 Firestore 對照表 → 立即 resync 填好 account_tabs_cache。
     """
     if template_copier is None:
-        # 延遲 import:sheets_client.resync() 也需要本模組的憑證函式,模組層級互相
+        # 延遲 import:sheets_client 也需要本模組的憑證函式,模組層級互相
         # import 會造成循環依賴,延遲到呼叫時才 import 即可避開——細節見 openspecs/DE.md。
         from app.services.sheets_client import copy_template_to_drive
 
         template_copier = copy_template_to_drive
+
+    if resyncer is None:
+        from app.services.sheets_client import resync
+
+        resyncer = resync
 
     code_verifier = _pending_code_verifiers.pop(line_user_id, None)
     credentials = credentials_exchanger(code, code_verifier)
@@ -138,4 +144,11 @@ def link_friend_account(
     )
     client = firestore_client or get_firestore_client()
     client.collection("friends").document(line_user_id).set(friend.model_dump(mode="json"))
+
+    try:
+        # 新範本沒有資料列,stock_list=[] 足以讓 resync 辨認分頁並填好 account_tabs_cache
+        resyncer(friend, [], firestore_client=client)
+    except Exception:
+        pass  # 非致命:失敗時使用者手動傳「立即同步」可補救
+
     return friend
