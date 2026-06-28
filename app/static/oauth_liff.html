@@ -65,12 +65,15 @@
         }
 
         const idToken = liff.getIDToken();
+        msg.textContent = 'idToken: ' + (idToken ? idToken.substring(0, 20) + '…' : 'null');
         const res = await fetch('/oauth/url', {
           headers: { 'Authorization': 'Bearer ' + idToken }
         });
 
         if (!res.ok) {
-          msg.textContent = '取得授權連結失敗，請關閉後重試';
+          let detail = '取得授權連結失敗 (' + res.status + ')';
+          try { const b = await res.json(); detail += '：' + (b.detail || JSON.stringify(b)); } catch {}
+          msg.textContent = detail;
           msg.className = 'msg err';
           return;
         }
