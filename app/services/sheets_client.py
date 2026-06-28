@@ -340,7 +340,7 @@ def append_transaction_row(
 
     service.spreadsheets().values().append(
         spreadsheetId=friend.spreadsheet_id,
-        range=f"'{tab_name}'!A1",
+        range=f"'{tab_name}'!A2",
         valueInputOption="USER_ENTERED",
         insertDataOption="INSERT_ROWS",
         body={"values": [new_row]},
@@ -447,6 +447,8 @@ def delete_transaction_rows(
             spreadsheetId=friend.spreadsheet_id,
             body={"requests": delete_requests},
         ).execute()
+
+    return total_deleted
 
 
 def create_account_tab(
@@ -557,5 +559,3 @@ def create_account_tab(
             existing + [tab_name],
             firestore_client=firestore_client,
         )
-
-    return total_deleted
