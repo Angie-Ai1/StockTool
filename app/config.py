@@ -24,6 +24,8 @@ class Settings(BaseSettings):
 
     tick_shared_secret: str = ""
 
+    liff_id: str = ""
+
     port: int = 8000
     tz: str = "Asia/Taipei"
 

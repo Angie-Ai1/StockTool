@@ -124,7 +124,7 @@ def test_duplicate_event_processed_once(client, monkeypatch):
     get_friend = MagicMock(return_value=None)
     build_url = MagicMock(return_value="https://example.com/oauth")
     monkeypatch.setattr(line_webhook, "get_friend_record", get_friend)
-    monkeypatch.setattr(line_webhook, "build_authorization_url", build_url)
+    monkeypatch.setattr(line_webhook, "_liff_oauth_url", build_url)
     monkeypatch.setattr(line_webhook, "_reply_text", MagicMock())
 
     event = _message_event("Uxxx", event_id="01DUP")
@@ -159,7 +159,7 @@ def test_follow_event_new_friend_does_not_reactivate(client, monkeypatch):
     monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=None))
     reactivate = MagicMock()
     monkeypatch.setattr(line_webhook, "reactivate_friend", reactivate)
-    monkeypatch.setattr(line_webhook, "build_authorization_url", MagicMock(return_value="https://oauth.example.com"))
+    monkeypatch.setattr(line_webhook, "_liff_oauth_url", MagicMock(return_value="https://oauth.example.com"))
     monkeypatch.setattr(line_webhook, "_reply_text", MagicMock())
 
     _post(client, [_follow_event("Uxxx")])
@@ -169,7 +169,7 @@ def test_follow_event_new_friend_does_not_reactivate(client, monkeypatch):
 
 def test_follow_event_new_friend_replies_with_welcome_and_oauth_url(client, monkeypatch):
     monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=None))
-    monkeypatch.setattr(line_webhook, "build_authorization_url", MagicMock(return_value="https://oauth.example.com"))
+    monkeypatch.setattr(line_webhook, "_liff_oauth_url", MagicMock(return_value="https://oauth.example.com"))
     reply = MagicMock()
     monkeypatch.setattr(line_webhook, "_reply_text", reply)
 
@@ -216,7 +216,7 @@ def test_text_message_usage_guide_for_linked_friend(client, monkeypatch):
 
 def test_text_message_usage_guide_for_unlinked_friend_includes_oauth_url(client, monkeypatch):
     monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=None))
-    monkeypatch.setattr(line_webhook, "build_authorization_url", MagicMock(return_value="https://oauth.example.com"))
+    monkeypatch.setattr(line_webhook, "_liff_oauth_url", MagicMock(return_value="https://oauth.example.com"))
     reply = MagicMock()
     monkeypatch.setattr(line_webhook, "_reply_text", reply)
 
@@ -256,7 +256,7 @@ def test_unfollow_event_unknown_friend_is_noop(client, monkeypatch):
 def test_text_message_from_unlinked_friend_replies_with_oauth_link(client, monkeypatch):
     monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=None))
     monkeypatch.setattr(
-        line_webhook, "build_authorization_url", MagicMock(return_value="https://example.com/oauth")
+        line_webhook, "_liff_oauth_url", MagicMock(return_value="https://example.com/oauth")
     )
     reply = MagicMock()
     monkeypatch.setattr(line_webhook, "_reply_text", reply)
@@ -293,7 +293,7 @@ def test_text_message_needs_reauth_replies_with_reauth_url(client, monkeypatch):
     )
     monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=needs_reauth_friend))
     monkeypatch.setattr(
-        line_webhook, "build_authorization_url", MagicMock(return_value="https://example.com/reauth")
+        line_webhook, "_liff_oauth_url", MagicMock(return_value="https://example.com/reauth")
     )
     reply = MagicMock()
     monkeypatch.setattr(line_webhook, "_reply_text", reply)
@@ -537,7 +537,7 @@ def test_query_oauth_expired_replies_reauth_url(client, monkeypatch):
         line_webhook, "resync", MagicMock(side_effect=OAuthInvalidGrantError("expired"))
     )
     monkeypatch.setattr(
-        line_webhook, "build_authorization_url", MagicMock(return_value="https://example.com/reauth")
+        line_webhook, "_liff_oauth_url", MagicMock(return_value="https://example.com/reauth")
     )
     reply = MagicMock()
     monkeypatch.setattr(line_webhook, "_reply_text", reply)

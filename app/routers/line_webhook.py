@@ -45,7 +45,7 @@ from app.models.schemas import FriendRecord, FriendStatus, Position, ResyncResul
 from app.routers.tick import get_cached_stock_list
 from app.services.friend_repository import deactivate_friend, get_friend_record, reactivate_friend
 from app.services.fuzzy_match import resolve_stock
-from app.services.oauth_service import OAuthInvalidGrantError, build_authorization_url
+from app.services.oauth_service import OAuthInvalidGrantError
 from app.services.parser import parse_transaction_text
 from app.services.pnl_engine import InsufficientPositionError, apply_transaction, compute_unrealized_pnl
 from app.services.sheets_client import (
@@ -136,6 +136,10 @@ def _clear_undo(line_user_id: str) -> None:
 
 
 # ── LINE 回覆工具 ─────────────────────────────────────────────────────────────
+
+def _liff_oauth_url() -> str:
+    return f"https://liff.line.me/{get_settings().liff_id}"
+
 
 def _reply_text(reply_token: str, text: str) -> None:
     settings = get_settings()
@@ -240,13 +244,11 @@ def _execute_booking(
     try:
         successes, errors, written_uuids = _book_transactions(friend, tab_name, transactions, stock_list)
     except OAuthInvalidGrantError:
-        url = build_authorization_url(friend.line_user_id)
-        _reply_text(reply_token, f"試算表授權已過期,需要重新連結才能繼續記帳:{url}")
+        _reply_text(reply_token, f"試算表授權已過期,需要重新連結才能繼續記帳:{_liff_oauth_url()}")
         return
     except HttpError as exc:
         if exc.resp.status == 404:
-            url = build_authorization_url(friend.line_user_id)
-            _reply_text(reply_token, f"找不到試算表(可能已被刪除),需要重新連結:{url}")
+            _reply_text(reply_token, f"找不到試算表(可能已被刪除),需要重新連結:{_liff_oauth_url()}")
         else:
             _reply_text(reply_token, "試算表連線異常,請稍後再試")
         return
@@ -282,13 +284,11 @@ def _execute_booking_by_tag(
             all_errors.extend(e)
             all_written_rows.extend((tab, uid) for uid in uuids)
     except OAuthInvalidGrantError:
-        url = build_authorization_url(friend.line_user_id)
-        _reply_text(reply_token, f"試算表授權已過期,需要重新連結才能繼續記帳:{url}")
+        _reply_text(reply_token, f"試算表授權已過期,需要重新連結才能繼續記帳:{_liff_oauth_url()}")
         return
     except HttpError as exc:
         if exc.resp.status == 404:
-            url = build_authorization_url(friend.line_user_id)
-            _reply_text(reply_token, f"找不到試算表(可能已被刪除),需要重新連結:{url}")
+            _reply_text(reply_token, f"找不到試算表(可能已被刪除),需要重新連結:{_liff_oauth_url()}")
         else:
             _reply_text(reply_token, "試算表連線異常,請稍後再試")
         return
@@ -315,13 +315,11 @@ def _handle_undo(reply_token: str, friend: FriendRecord) -> None:
     try:
         deleted = delete_transaction_rows(friend, undo_info["written_rows"])
     except OAuthInvalidGrantError:
-        url = build_authorization_url(friend.line_user_id)
-        _reply_text(reply_token, f"試算表授權已過期,需要重新連結:{url}")
+        _reply_text(reply_token, f"試算表授權已過期,需要重新連結:{_liff_oauth_url()}")
         return
     except HttpError as exc:
         if exc.resp.status == 404:
-            url = build_authorization_url(friend.line_user_id)
-            _reply_text(reply_token, f"找不到試算表(可能已被刪除),需要重新連結:{url}")
+            _reply_text(reply_token, f"找不到試算表(可能已被刪除),需要重新連結:{_liff_oauth_url()}")
         else:
             _reply_text(reply_token, "試算表連線異常,請稍後再試")
         return
@@ -384,13 +382,11 @@ def _handle_query(reply_token: str, friend: FriendRecord) -> None:
     try:
         result = resync(friend, stock_list)
     except OAuthInvalidGrantError:
-        url = build_authorization_url(friend.line_user_id)
-        _reply_text(reply_token, f"試算表授權已過期,需要重新連結:{url}")
+        _reply_text(reply_token, f"試算表授權已過期,需要重新連結:{_liff_oauth_url()}")
         return
     except HttpError as exc:
         if exc.resp.status == 404:
-            url = build_authorization_url(friend.line_user_id)
-            _reply_text(reply_token, f"找不到試算表(可能已被刪除),需要重新連結:{url}")
+            _reply_text(reply_token, f"找不到試算表(可能已被刪除),需要重新連結:{_liff_oauth_url()}")
         else:
             _reply_text(reply_token, "試算表連線異常,請稍後再試")
         return
@@ -407,13 +403,11 @@ def _handle_sync(reply_token: str, friend: FriendRecord) -> None:
     try:
         resync(friend, stock_list)
     except OAuthInvalidGrantError:
-        url = build_authorization_url(friend.line_user_id)
-        _reply_text(reply_token, f"試算表授權已過期，需要重新連結：{url}")
+        _reply_text(reply_token, f"試算表授權已過期，需要重新連結：{_liff_oauth_url()}")
         return
     except HttpError as exc:
         if exc.resp.status == 404:
-            url = build_authorization_url(friend.line_user_id)
-            _reply_text(reply_token, f"找不到試算表（可能已被刪除），需要重新連結：{url}")
+            _reply_text(reply_token, f"找不到試算表（可能已被刪除），需要重新連結：{_liff_oauth_url()}")
         else:
             _reply_text(reply_token, "同步失敗，請稍後再試")
         return
@@ -425,8 +419,7 @@ def _handle_add_tab(reply_token: str, friend: FriendRecord, tab_name: str) -> No
     try:
         create_account_tab(friend, tab_name)
     except OAuthInvalidGrantError:
-        url = build_authorization_url(friend.line_user_id)
-        _reply_text(reply_token, f"試算表授權已過期，需要重新連結：{url}")
+        _reply_text(reply_token, f"試算表授權已過期，需要重新連結：{_liff_oauth_url()}")
         return
     except HttpError as exc:
         if exc.resp.status == 400:
@@ -505,8 +498,7 @@ def _handle_follow_event(event: FollowEvent) -> None:
     line_user_id = event.source.user_id
     friend = get_friend_record(line_user_id)
     if friend is None:
-        url = build_authorization_url(line_user_id)
-        _reply_text(event.reply_token, _build_welcome_new_text(url))
+        _reply_text(event.reply_token, _build_welcome_new_text(_liff_oauth_url()))
     elif friend.status == FriendStatus.INACTIVE:
         reactivate_friend(line_user_id)
         _reply_text(event.reply_token, _build_welcome_back_text())
@@ -528,19 +520,16 @@ def _handle_text_message(event: MessageEvent) -> None:
     if text == "使用說明":
         guide = _build_usage_guide_text()
         if friend is None or friend.status == FriendStatus.NEEDS_REAUTH:
-            url = build_authorization_url(line_user_id)
-            guide += f"\n\n連結試算表：{url}"
+            guide += f"\n\n連結試算表：{_liff_oauth_url()}"
         _reply_text(event.reply_token, guide)
         return
 
     if friend is None:
-        url = build_authorization_url(line_user_id)
-        _reply_text(event.reply_token, f"尚未連結記帳試算表,請點這裡授權:{url}")
+        _reply_text(event.reply_token, f"尚未連結記帳試算表,請點這裡授權:{_liff_oauth_url()}")
         return
 
     if friend.status == FriendStatus.NEEDS_REAUTH:
-        url = build_authorization_url(line_user_id)
-        _reply_text(event.reply_token, f"試算表授權已過期,請重新連結就可以繼續記帳:{url}")
+        _reply_text(event.reply_token, f"試算表授權已過期,請重新連結就可以繼續記帳:{_liff_oauth_url()}")
         return
 
     # 特殊指令優先於記帳解析——規格 1.7

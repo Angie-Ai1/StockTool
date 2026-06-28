@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>連結 Google 帳號</title>
+  <script src="https://static.line-scdn.net/liff/edge/versions/2.22.3/sdk.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      background: #f5f5f5;
+    }
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 32px 24px;
+      max-width: 320px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    }
+    h2 { margin: 0 0 8px; font-size: 18px; }
+    p  { color: #666; font-size: 14px; margin: 0 0 24px; }
+    .btn {
+      display: inline-block;
+      background: #4285F4;
+      color: white;
+      border-radius: 8px;
+      padding: 12px 28px;
+      font-size: 15px;
+      cursor: pointer;
+      border: none;
+      width: 100%;
+    }
+    .btn:disabled { background: #aaa; }
+    .msg { margin-top: 16px; font-size: 13px; color: #888; }
+    .err { color: #e53935; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>連結 Google 帳號</h2>
+    <p>點下方按鈕，系統將在瀏覽器中開啟 Google 授權頁面</p>
+    <button class="btn" id="authBtn" disabled>載入中…</button>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <script>
+    const btn = document.getElementById('authBtn');
+    const msg = document.getElementById('msg');
+
+    async function init() {
+      try {
+        await liff.init({ liffId: '__LIFF_ID__' });
+
+        if (!liff.isLoggedIn()) {
+          liff.login();
+          return;
+        }
+
+        const idToken = liff.getIDToken();
+        const res = await fetch('/oauth/url', {
+          headers: { 'Authorization': 'Bearer ' + idToken }
+        });
+
+        if (!res.ok) {
+          msg.textContent = '取得授權連結失敗，請關閉後重試';
+          msg.className = 'msg err';
+          return;
+        }
+
+        const { auth_url } = await res.json();
+        btn.textContent = '授權 Google 帳號';
+        btn.disabled = false;
+        btn.onclick = () => liff.openWindow({ url: auth_url, external: true });
+
+      } catch (e) {
+        msg.textContent = '初始化失敗：' + e.message;
+        msg.className = 'msg err';
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

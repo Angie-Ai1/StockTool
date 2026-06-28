@@ -5,6 +5,7 @@ log.md
 logs/
 CLAUDE.md
 Instruction/
+explanation/
 
 # Python / Poetry
 .venv/

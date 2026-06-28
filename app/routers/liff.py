@@ -12,6 +12,7 @@ MVP 範圍只回應一個摘要端點:登入連結狀態、目前庫存列表、
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import HTMLResponse
 from googleapiclient.errors import HttpError
 from pydantic import BaseModel
 
@@ -76,6 +77,27 @@ def _to_position_summary(position: Position, stock: StockQuote | None) -> Positi
         closing_price=stock.close if stock is not None else None,
         unrealized_pnl=unrealized_pnl,
     )
+
+
+@router.get("/oauth/liff", response_class=HTMLResponse)
+def oauth_liff_page() -> str:
+    """回傳 LIFF 授權頁面，將 __LIFF_ID__ 替換為 settings 中的實際值"""
+    with open("app/static/oauth_liff.html") as f:
+        html = f.read()
+    return html.replace("__LIFF_ID__", get_settings().liff_id)
+
+
+@router.get("/oauth/url")
+def get_oauth_url(authorization: str = Header(...)) -> dict[str, str]:
+    """LIFF 頁面用：驗證 id_token 後回傳 Google OAuth URL"""
+    id_token = _extract_bearer_token(authorization)
+    try:
+        line_user_id = verify_liff_id_token(id_token)
+    except InvalidLiffIdTokenError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    from app.services.oauth_service import build_authorization_url
+    return {"auth_url": build_authorization_url(line_user_id)}
 
 
 class SyncRequest(BaseModel):
