@@ -65,7 +65,7 @@
         }
 
         const idToken = liff.getIDToken();
-        msg.textContent = 'idToken: ' + (idToken ? idToken.substring(0, 20) + '…' : 'null');
+        msg.innerHTML = 'idToken: ' + (idToken ? idToken.substring(0, 20) + '…' : '<b>null</b>');
         const res = await fetch('/oauth/url', {
           headers: { 'Authorization': 'Bearer ' + idToken }
         });
@@ -73,7 +73,7 @@
         if (!res.ok) {
           let detail = '取得授權連結失敗 (' + res.status + ')';
           try { const b = await res.json(); detail += '：' + (b.detail || JSON.stringify(b)); } catch {}
-          msg.textContent = detail;
+          msg.innerHTML += '<br>' + detail;
           msg.className = 'msg err';
           return;
         }
