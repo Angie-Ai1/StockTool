@@ -181,7 +181,7 @@ def _book_transactions(
             errors.append(f"找不到股票「{txn.stock_query}」")
 
     if not resolved:
-        return successes, errors
+        return successes, errors, written_uuids
 
     positions: dict[str, Position] = read_tab_positions(friend, tab_name, stock_list)
 
