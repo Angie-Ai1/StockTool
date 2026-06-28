@@ -109,19 +109,79 @@ def test_run_daily_close_task_runs_and_marks_executed_when_due():
     firestore_client.collection.return_value.document.return_value.get.return_value = snapshot
     stock_list = [StockQuote(code="2330", name="台積電", close=Decimal("1000"))]
     fetch_fn = MagicMock(return_value=stock_list)
+    save_fn = MagicMock()
 
     tick.run_daily_close_task(
         now=_now(14, 30),
         firestore_client=firestore_client,
         fetch_stock_list_fn=fetch_fn,
+        save_stock_list_fn=save_fn,
         list_friends_fn=MagicMock(return_value=[]),
     )
 
     fetch_fn.assert_called_once()
+    save_fn.assert_called_once_with(stock_list, firestore_client=firestore_client)
     firestore_client.collection.return_value.document.return_value.set.assert_called_once_with(
         {"last_run_date": "2026-06-25"}
     )
     assert tick.get_cached_stock_list() == stock_list
+
+
+def test_save_stock_list_to_firestore_writes_correct_document():
+    firestore_client = MagicMock()
+    stock_list = [
+        StockQuote(code="2330", name="台積電", close=Decimal("1000")),
+        StockQuote(code="2408", name="南亞科", close=None),
+    ]
+
+    tick._save_stock_list_to_firestore(stock_list, firestore_client=firestore_client)
+
+    firestore_client.collection.return_value.document.return_value.set.assert_called_once_with({
+        "stocks": [
+            {"code": "2330", "name": "台積電", "close": "1000"},
+            {"code": "2408", "name": "南亞科", "close": None},
+        ]
+    })
+
+
+def test_load_stock_list_from_firestore_returns_list_when_doc_exists():
+    firestore_client = MagicMock()
+    snapshot = MagicMock(exists=True)
+    snapshot.to_dict.return_value = {
+        "stocks": [
+            {"code": "2330", "name": "台積電", "close": "1000"},
+            {"code": "2408", "name": "南亞科", "close": None},
+        ]
+    }
+    firestore_client.collection.return_value.document.return_value.get.return_value = snapshot
+
+    result = tick._load_stock_list_from_firestore(firestore_client=firestore_client)
+
+    assert result == [
+        StockQuote(code="2330", name="台積電", close=Decimal("1000")),
+        StockQuote(code="2408", name="南亞科", close=None),
+    ]
+
+
+def test_load_stock_list_from_firestore_returns_empty_when_doc_missing():
+    firestore_client = MagicMock()
+    snapshot = MagicMock(exists=False)
+    firestore_client.collection.return_value.document.return_value.get.return_value = snapshot
+
+    result = tick._load_stock_list_from_firestore(firestore_client=firestore_client)
+
+    assert result == []
+
+
+def test_get_cached_stock_list_falls_back_to_firestore_when_memory_empty(monkeypatch):
+    stock_list = [StockQuote(code="2330", name="台積電", close=Decimal("1000"))]
+    monkeypatch.setattr(tick, "_cached_stock_list", [])
+    monkeypatch.setattr(tick, "_load_stock_list_from_firestore", MagicMock(return_value=stock_list))
+
+    result = tick.get_cached_stock_list()
+
+    assert result == stock_list
+    assert tick._cached_stock_list == stock_list
 
 
 def _friend(line_user_id: str) -> FriendRecord:
@@ -148,6 +208,7 @@ def test_run_daily_close_task_resyncs_each_active_friend_with_interval_between_c
         now=_now(14, 30),
         firestore_client=firestore_client,
         fetch_stock_list_fn=MagicMock(return_value=stock_list),
+        save_stock_list_fn=MagicMock(),
         list_friends_fn=MagicMock(return_value=friends),
         resync_fn=resync_fn,
         sleep_fn=sleep_fn,
@@ -169,6 +230,7 @@ def test_run_daily_close_task_continues_after_oauth_invalid_grant():
         now=_now(14, 30),
         firestore_client=firestore_client,
         fetch_stock_list_fn=MagicMock(return_value=[]),
+        save_stock_list_fn=MagicMock(),
         list_friends_fn=MagicMock(return_value=friends),
         resync_fn=resync_fn,
         sleep_fn=MagicMock(),
@@ -190,6 +252,7 @@ def test_run_daily_close_task_continues_after_sheets_404():
         now=_now(14, 30),
         firestore_client=firestore_client,
         fetch_stock_list_fn=MagicMock(return_value=[]),
+        save_stock_list_fn=MagicMock(),
         list_friends_fn=MagicMock(return_value=friends),
         resync_fn=resync_fn,
         sleep_fn=MagicMock(),
@@ -212,6 +275,7 @@ def test_run_daily_close_task_propagates_unexpected_error_and_skips_marking_exec
             now=_now(14, 30),
             firestore_client=firestore_client,
             fetch_stock_list_fn=MagicMock(return_value=[]),
+            save_stock_list_fn=MagicMock(),
             list_friends_fn=MagicMock(return_value=friends),
             resync_fn=resync_fn,
             sleep_fn=MagicMock(),

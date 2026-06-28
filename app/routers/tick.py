@@ -12,6 +12,7 @@
 
 import time
 from datetime import datetime
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
@@ -35,11 +36,14 @@ CLOSE_TASK_MINUTE = 30
 FRIEND_RESYNC_INTERVAL_SECONDS = 2
 
 # 14:30 收盤任務抓回的收盤價/代碼清單,留給之後逐位親友 resync 共用(1.6)。
-# 只存在 process 記憶體,下次排程整批覆寫,不需要持久化。
+# 記憶體快取;重啟或 14:30 前為空時,從 Firestore system/stock_list 回載。
 _cached_stock_list: list[StockQuote] = []
 
 
 def get_cached_stock_list() -> list[StockQuote]:
+    global _cached_stock_list
+    if not _cached_stock_list:
+        _cached_stock_list = _load_stock_list_from_firestore()
     return _cached_stock_list
 
 
@@ -60,11 +64,38 @@ def _mark_today_executed(today: str, firestore_client=None) -> None:
     client.collection("system").document("scheduler").set({"last_run_date": today})
 
 
+def _save_stock_list_to_firestore(stock_list: list[StockQuote], firestore_client=None) -> None:
+    client = firestore_client or get_firestore_client()
+    client.collection("system").document("stock_list").set({
+        "stocks": [
+            {"code": s.code, "name": s.name, "close": str(s.close) if s.close is not None else None}
+            for s in stock_list
+        ]
+    })
+
+
+def _load_stock_list_from_firestore(firestore_client=None) -> list[StockQuote]:
+    client = firestore_client or get_firestore_client()
+    snapshot = client.collection("system").document("stock_list").get()
+    if not snapshot.exists:
+        return []
+    data = snapshot.to_dict()
+    return [
+        StockQuote(
+            code=s["code"],
+            name=s["name"],
+            close=Decimal(s["close"]) if s.get("close") is not None else None,
+        )
+        for s in data.get("stocks", [])
+    ]
+
+
 def run_daily_close_task(
     *,
     now: datetime | None = None,
     firestore_client=None,
     fetch_stock_list_fn=fetch_stock_list,
+    save_stock_list_fn=_save_stock_list_to_firestore,
     list_friends_fn=list_active_friends,
     resync_fn=resync,
     sleep_fn=time.sleep,
@@ -91,6 +122,7 @@ def run_daily_close_task(
 
     global _cached_stock_list
     _cached_stock_list = fetch_stock_list_fn()
+    save_stock_list_fn(_cached_stock_list, firestore_client=client)
 
     friends = list_friends_fn(firestore_client=client)
     for index, friend in enumerate(friends):
