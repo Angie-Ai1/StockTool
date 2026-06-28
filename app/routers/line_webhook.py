@@ -363,16 +363,15 @@ def _format_query_reply(
                 else:
                     section.append(f"均價 ${pos.avg_cost:.2f} | 無即時報價")
                 total_realized += pos.realized_pnl
-
-        section.append("\n─────────────")
+        section.append("────────────")
         sign = "+" if total_realized >= 0 else ""
         section.append(f"已實現損益 {sign}{total_realized:,.0f}")
         if has_price:
             section.append(f"持股市值 ${total_market_value:,.0f}")
-
+        section.append("────────────")
         parts.append("\n".join(section))
 
-    return "\n\n".join(parts)
+    return "\n".join(parts)
 
 
 def _handle_query(reply_token: str, friend: FriendRecord) -> None:
@@ -450,13 +449,13 @@ def _build_welcome_new_text(oauth_url: str) -> str:
     return (
         "嗨！我是你的記帳小幫手 📊\n"
         "\n"
-        "首先，點這裡連結你自己的記帳試算表：\n"
+        "首先，請點以下連結創建Google記帳試算表：\n"
         f"{oauth_url}\n"
         "\n"
         "連結完成後就可以開始記帳囉！\n"
         f"{_FORMAT_GUIDE}\n"
         "\n"
-        "隨時傳「使用說明」可再看一次 😊\n"
+        "LINE選單中的「使用說明」，可在記帳前先點選確認唷😊\n"
         "\n"
         f"{_DISCLAIMER}"
     )
@@ -468,7 +467,7 @@ def _build_welcome_back_text() -> str:
         "\n"
         f"{_FORMAT_GUIDE}\n"
         "\n"
-        "隨時傳「使用說明」可再看一次 😊"
+        "隨時可傳「使用說明」再看一次 😊"
     )
 
 
@@ -476,17 +475,24 @@ def _build_usage_guide_text() -> str:
     return (
         "📊 記帳格式說明\n"
         "\n"
-        "【買賣】買/賣 股票 數量 總金額\n"
+        "【買賣】買/賣 股票(股數) 數量 總金額\n"
         "【股利】股息 股票 金額\n"
         "【配股】配股 股票 股數\n"
         "\n"
-        "範例：\n"
+        "紀錄範例如下(輸入股票代碼或股票名稱皆可辨識個股資訊)：\n"
         "買 台積電 100 85000\n"
+        "買 2330 100 85000\n"
+        "如果要賣出股票, 則改為「賣」即可:\n"
         "賣 2330 50 48000\n"
+        "\n"
+        "關於配股配息，紀錄範例如下\n"
         "股息 0050 3000\n"
+        "配股 0056 100\n"
         "\n"
         "傳「查詢」或按選單「查詢」看持股損益\n"
         "多筆請分行，一次傳送即可\n"
+        "試算表的股票(股數)單位為「股」,若輸入1張,會自動辨識為1000股\n"
+        "\n"
         "\n"
         f"{_DISCLAIMER}"
     )
@@ -571,7 +577,7 @@ def _handle_text_message(event: MessageEvent) -> None:
         error_lines = [
             f"第 {e.line_number} 行:「{e.raw_text}」— {e.reason}" for e in parse_result.errors
         ]
-        _reply_text(event.reply_token, "解析失敗:\n" + "\n".join(error_lines))
+        _reply_text(event.reply_token, "讀取失敗:\n" + "\n".join(error_lines))
         return
 
     parse_errors = [
