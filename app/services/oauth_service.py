@@ -62,7 +62,7 @@ def build_authorization_url(line_user_id: str) -> str:
     """state 帶 LINE user ID,/oauth/callback 收到後對應回這位親友,並防 CSRF——規格 2.2、3.1"""
     flow = create_oauth_flow()
     url, _state = flow.authorization_url(
-        access_type="offline", prompt="consent", state=line_user_id
+        access_type="offline", prompt="select_account consent", state=line_user_id
     )
     verifier = getattr(flow, "code_verifier", None)
     if verifier:
