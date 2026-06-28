@@ -1,16 +1,20 @@
-"""LINE webhook 路由 — 規格 1.2:簽章驗證、僅處理 1:1 私訊、事件去重、follow/unfollow、記帳寫入。
+"""LINE webhook 路由 — 規格 1.2、1.7:簽章驗證、僅處理 1:1 私訊、事件去重、follow/unfollow、記帳寫入、
+撤銷上一筆、查詢庫存/損益。
 
 _handle_text_message() 完整流程:
   1. 未連結 → OAuth 授權 URL
   2. needs_reauth → 重新授權 URL
-  3. 多帳戶未標籤 → Quick Reply 詢問帳戶(5 分鐘有效期)
-  4. 已連結(含 Quick Reply 選擇回應) → parse → fuzzy match → 賣超防呆 → 寫入試算表 → 回覆
+  3. 「❌ 刪除上一筆」→ 撤銷上一次記帳(5 分鐘內有效)
+  4. 「查詢」→ 回覆目前庫存/損益摘要
+  5. 多帳戶未標籤 → Quick Reply 詢問帳戶(5 分鐘有效期)
+  6. 已連結(含 Quick Reply 選擇回應) → parse → fuzzy match → 賣超防呆 → 寫入試算表 → 回覆(含撤銷 Quick Reply)
 """
 
 import time
 import uuid
 from collections import defaultdict
 from datetime import date as Date
+from decimal import Decimal
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from googleapiclient.errors import HttpError
@@ -35,14 +39,19 @@ from linebot.v3.webhooks import (
 )
 
 from app.config import get_settings
-from app.models.schemas import FriendRecord, FriendStatus, Position, StockQuote, TransactionRow
+from app.models.schemas import FriendRecord, FriendStatus, Position, ResyncResult, StockQuote, TransactionRow
 from app.routers.tick import get_cached_stock_list
 from app.services.friend_repository import deactivate_friend, get_friend_record, reactivate_friend
 from app.services.fuzzy_match import resolve_stock
 from app.services.oauth_service import OAuthInvalidGrantError, build_authorization_url
 from app.services.parser import parse_transaction_text
-from app.services.pnl_engine import InsufficientPositionError, apply_transaction
-from app.services.sheets_client import append_transaction_row, read_tab_positions
+from app.services.pnl_engine import InsufficientPositionError, apply_transaction, compute_unrealized_pnl
+from app.services.sheets_client import (
+    append_transaction_row,
+    delete_transaction_rows,
+    read_tab_positions,
+    resync,
+)
 
 router = APIRouter()
 
@@ -53,6 +62,10 @@ _recent_event_ids: dict[str, float] = {}
 # 多帳戶 Quick Reply 選擇的暫存狀態(process 記憶體,5 分鐘有效)
 _PENDING_SELECTION_WINDOW = 300
 _pending_selections: dict[str, dict] = {}
+
+# 撤銷上一筆記帳的暫存狀態(process 記憶體,5 分鐘有效)
+_PENDING_UNDO_WINDOW = 300
+_pending_undo: dict[str, dict] = {}
 
 
 # ── 事件去重 ──────────────────────────────────────────────────────────────────
@@ -96,6 +109,29 @@ def _clear_pending(line_user_id: str) -> None:
     _pending_selections.pop(line_user_id, None)
 
 
+# ── 撤銷暫存 ──────────────────────────────────────────────────────────────────
+
+def _get_undo(line_user_id: str) -> dict | None:
+    entry = _pending_undo.get(line_user_id)
+    if entry is None:
+        return None
+    if time.monotonic() > entry["expires_at"]:
+        del _pending_undo[line_user_id]
+        return None
+    return entry
+
+
+def _set_undo(line_user_id: str, written_rows: list[tuple[str, str]]) -> None:
+    _pending_undo[line_user_id] = {
+        "written_rows": written_rows,
+        "expires_at": time.monotonic() + _PENDING_UNDO_WINDOW,
+    }
+
+
+def _clear_undo(line_user_id: str) -> None:
+    _pending_undo.pop(line_user_id, None)
+
+
 # ── LINE 回覆工具 ─────────────────────────────────────────────────────────────
 
 def _reply_text(reply_token: str, text: str) -> None:
@@ -127,13 +163,14 @@ def _book_transactions(
     tab_name: str,
     parsed_txns: list,
     stock_list: list[StockQuote],
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str]]:
     """fuzzy match → 讀取庫存 → 賣超防呆 → 逐筆寫入試算表。
-    回傳 (成功訊息列表, 錯誤訊息列表)。
+    回傳 (成功訊息列表, 錯誤訊息列表, 已寫入的 row_uuid 列表)。
     OAuth 失效或 Sheets API 錯誤直接往上拋,呼叫端負責回覆親友。
     """
     successes: list[str] = []
     errors: list[str] = []
+    written_uuids: list[str] = []
 
     resolved: list[tuple] = []
     for txn in parsed_txns:
@@ -166,6 +203,7 @@ def _book_transactions(
         )
         append_transaction_row(friend, tab_name, row)
         positions[stock.code] = new_position
+        written_uuids.append(row.row_uuid)
 
         label_parts = [txn.action.value, f"{stock.code} {stock.name}"]
         if txn.quantity is not None:
@@ -174,7 +212,7 @@ def _book_transactions(
             label_parts.append(f"${txn.amount}")
         successes.append(" ".join(label_parts))
 
-    return successes, errors
+    return successes, errors, written_uuids
 
 
 def _format_booking_reply(successes: list[str], errors: list[str]) -> str:
@@ -197,7 +235,7 @@ def _execute_booking(
 ) -> None:
     """呼叫 _book_transactions,處理 OAuth/HTTP 錯誤後回覆親友"""
     try:
-        successes, errors = _book_transactions(friend, tab_name, transactions, stock_list)
+        successes, errors, written_uuids = _book_transactions(friend, tab_name, transactions, stock_list)
     except OAuthInvalidGrantError:
         url = build_authorization_url(friend.line_user_id)
         _reply_text(reply_token, f"試算表授權已過期,需要重新連結才能繼續記帳:{url}")
@@ -212,7 +250,12 @@ def _execute_booking(
 
     if extra_errors:
         errors = extra_errors + errors
-    _reply_text(reply_token, _format_booking_reply(successes, errors))
+    reply_text = _format_booking_reply(successes, errors)
+    if successes:
+        _set_undo(friend.line_user_id, [(tab_name, uid) for uid in written_uuids])
+        _reply_with_quick_reply(reply_token, reply_text, ["❌ 刪除上一筆"])
+    else:
+        _reply_text(reply_token, reply_text)
 
 
 def _execute_booking_by_tag(
@@ -228,11 +271,13 @@ def _execute_booking_by_tag(
 
     all_successes: list[str] = []
     all_errors: list[str] = []
+    all_written_rows: list[tuple[str, str]] = []
     try:
         for tab, txns in by_tab.items():
-            s, e = _book_transactions(friend, tab, txns, stock_list)
+            s, e, uuids = _book_transactions(friend, tab, txns, stock_list)
             all_successes.extend(s)
             all_errors.extend(e)
+            all_written_rows.extend((tab, uid) for uid in uuids)
     except OAuthInvalidGrantError:
         url = build_authorization_url(friend.line_user_id)
         _reply_text(reply_token, f"試算表授權已過期,需要重新連結才能繼續記帳:{url}")
@@ -245,7 +290,111 @@ def _execute_booking_by_tag(
             _reply_text(reply_token, "試算表連線異常,請稍後再試")
         return
 
-    _reply_text(reply_token, _format_booking_reply(all_successes, all_errors))
+    reply_text = _format_booking_reply(all_successes, all_errors)
+    if all_successes:
+        _set_undo(friend.line_user_id, all_written_rows)
+        _reply_with_quick_reply(reply_token, reply_text, ["❌ 刪除上一筆"])
+    else:
+        _reply_text(reply_token, reply_text)
+
+
+# ── 撤銷與查詢 ────────────────────────────────────────────────────────────────
+
+def _handle_undo(reply_token: str, friend: FriendRecord) -> None:
+    """撤銷上一筆記帳——規格 1.7.1"""
+    _clear_pending(friend.line_user_id)
+    undo_info = _get_undo(friend.line_user_id)
+    if undo_info is None:
+        _reply_text(reply_token, "刪除時效已過(5 分鐘),無法撤銷")
+        return
+
+    _clear_undo(friend.line_user_id)
+    try:
+        deleted = delete_transaction_rows(friend, undo_info["written_rows"])
+    except OAuthInvalidGrantError:
+        url = build_authorization_url(friend.line_user_id)
+        _reply_text(reply_token, f"試算表授權已過期,需要重新連結:{url}")
+        return
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            url = build_authorization_url(friend.line_user_id)
+            _reply_text(reply_token, f"找不到試算表(可能已被刪除),需要重新連結:{url}")
+        else:
+            _reply_text(reply_token, "試算表連線異常,請稍後再試")
+        return
+
+    if deleted > 0:
+        _reply_text(reply_token, f"✅ 已撤銷 {deleted} 筆記帳")
+    else:
+        _reply_text(reply_token, "找不到要刪除的紀錄,可能已被手動刪除")
+
+
+def _format_query_reply(
+    result: ResyncResult,
+    name_map: dict[str, str],
+    price_map: dict[str, Decimal | None],
+) -> str:
+    if not result.accounts:
+        return "目前沒有帳戶分頁,請確認試算表結構"
+
+    parts: list[str] = []
+    for account in result.accounts:
+        active = [p for p in account.positions if p.quantity > 0]
+        section: list[str] = [f"📊 {account.tab_name}"]
+
+        total_realized = Decimal("0")
+        total_market_value = Decimal("0")
+        has_price = False
+
+        if not active:
+            section.append("目前無持股")
+        else:
+            for pos in active:
+                name = name_map.get(pos.stock_code, pos.stock_code)
+                section.append(f"\n{pos.stock_code} {name}  {pos.quantity}股")
+                price = price_map.get(pos.stock_code)
+                if price is not None:
+                    unrealized = compute_unrealized_pnl(pos, price)
+                    sign = "+" if unrealized >= 0 else ""
+                    section.append(f"均價 ${pos.avg_cost:.2f} | 未實現 {sign}{unrealized:,.0f}")
+                    total_market_value += pos.quantity * price
+                    has_price = True
+                else:
+                    section.append(f"均價 ${pos.avg_cost:.2f} | 無即時報價")
+                total_realized += pos.realized_pnl
+
+        section.append("\n─────────────")
+        sign = "+" if total_realized >= 0 else ""
+        section.append(f"已實現損益 {sign}{total_realized:,.0f}")
+        if has_price:
+            section.append(f"持股市值 ${total_market_value:,.0f}")
+
+        parts.append("\n".join(section))
+
+    return "\n\n".join(parts)
+
+
+def _handle_query(reply_token: str, friend: FriendRecord) -> None:
+    """查詢目前庫存與損益——規格 1.7.2"""
+    _clear_pending(friend.line_user_id)
+    stock_list = get_cached_stock_list()
+    try:
+        result = resync(friend, stock_list)
+    except OAuthInvalidGrantError:
+        url = build_authorization_url(friend.line_user_id)
+        _reply_text(reply_token, f"試算表授權已過期,需要重新連結:{url}")
+        return
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            url = build_authorization_url(friend.line_user_id)
+            _reply_text(reply_token, f"找不到試算表(可能已被刪除),需要重新連結:{url}")
+        else:
+            _reply_text(reply_token, "試算表連線異常,請稍後再試")
+        return
+
+    name_map = {q.code: q.name for q in stock_list}
+    price_map: dict[str, Decimal | None] = {q.code: q.close for q in stock_list}
+    _reply_text(reply_token, _format_query_reply(result, name_map, price_map))
 
 
 # ── 事件處理 ──────────────────────────────────────────────────────────────────
@@ -276,6 +425,14 @@ def _handle_text_message(event: MessageEvent) -> None:
     if friend.status == FriendStatus.NEEDS_REAUTH:
         url = build_authorization_url(line_user_id)
         _reply_text(event.reply_token, f"試算表授權已過期,需要重新連結才能繼續記帳:{url}")
+        return
+
+    # 特殊指令優先於記帳解析——規格 1.7
+    if text == "❌ 刪除上一筆":
+        _handle_undo(event.reply_token, friend)
+        return
+    if text == "查詢":
+        _handle_query(event.reply_token, friend)
         return
 
     # 先檢查是否為多帳戶 Quick Reply 的帳戶選擇回應

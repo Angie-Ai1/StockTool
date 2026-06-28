@@ -37,6 +37,7 @@ def _dummy_settings(monkeypatch):
     monkeypatch.setattr(line_webhook, "get_settings", lambda: DUMMY_SETTINGS)
     line_webhook._recent_event_ids.clear()
     line_webhook._pending_selections.clear()
+    line_webhook._pending_undo.clear()
 
 
 @pytest.fixture
@@ -251,19 +252,20 @@ def test_text_message_parse_failure_replies_error(client, monkeypatch):
 def test_text_message_booking_success_single_account(client, monkeypatch):
     monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
     monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=STOCK_LIST))
-    monkeypatch.setattr(
-        line_webhook, "read_tab_positions", MagicMock(return_value={})
-    )
+    monkeypatch.setattr(line_webhook, "read_tab_positions", MagicMock(return_value={}))
     monkeypatch.setattr(line_webhook, "append_transaction_row", MagicMock())
-    reply = MagicMock()
-    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+    quick_reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_with_quick_reply", quick_reply)
 
     _post(client, [_message_event("Uxxx")])  # 訊息為「買 2330 1000 500000」
 
-    reply.assert_called_once()
-    assert "✅" in reply.call_args.args[1]
-    assert "2330" in reply.call_args.args[1]
+    quick_reply.assert_called_once()
+    _, text, options = quick_reply.call_args.args
+    assert "✅" in text
+    assert "2330" in text
+    assert "❌ 刪除上一筆" in options
     line_webhook.append_transaction_row.assert_called_once()
+    assert "Uxxx" in line_webhook._pending_undo
 
 
 def test_text_message_oversell_replies_error(client, monkeypatch):
@@ -316,24 +318,25 @@ def test_text_message_quick_reply_selection_executes_booking(client, monkeypatch
     monkeypatch.setattr(line_webhook, "read_tab_positions", MagicMock(return_value={}))
     append = MagicMock()
     monkeypatch.setattr(line_webhook, "append_transaction_row", append)
-    reply = MagicMock()
-    monkeypatch.setattr(line_webhook, "_reply_text", reply)
 
-    # 先觸發 Quick Reply 詢問
+    # 先觸發 Quick Reply 詢問（帳戶選擇）
     quick_reply = MagicMock()
     monkeypatch.setattr(line_webhook, "_reply_with_quick_reply", quick_reply)
     _post(client, [_message_event("Uxxx", event_id="01MSG")])
     assert "Uxxx" in line_webhook._pending_selections
 
-    # 使用者點選「個人」
+    # 使用者點選「個人」→ 記帳成功後回覆 Quick Reply（含撤銷按鈕）
     selection_event = _message_event("Uxxx", event_id="02SEL")
     selection_event["message"]["text"] = "個人"
     _post(client, [selection_event])
 
-    reply.assert_called_once()
-    assert "✅" in reply.call_args.args[1]
+    assert quick_reply.call_count == 2
+    _, text, options = quick_reply.call_args.args
+    assert "✅" in text
+    assert "❌ 刪除上一筆" in options
     append.assert_called_once()
     assert "Uxxx" not in line_webhook._pending_selections
+    assert "Uxxx" in line_webhook._pending_undo
 
 
 def test_text_message_new_message_cancels_pending_selection(client, monkeypatch):
@@ -358,3 +361,121 @@ def test_text_message_new_message_cancels_pending_selection(client, monkeypatch)
     # pending 應已清除,並再次觸發 Quick Reply(因為還是多帳戶)
     assert quick_reply.call_count == 2
     assert "Uxxx" in line_webhook._pending_selections
+
+
+# ── 1.7 撤銷 ────────────────────────────────────────────────────────────────
+
+
+def test_undo_after_booking_deletes_rows(client, monkeypatch):
+    """記帳成功後送「❌ 刪除上一筆」,應呼叫 delete_transaction_rows 並回覆成功"""
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
+    monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=STOCK_LIST))
+    monkeypatch.setattr(line_webhook, "read_tab_positions", MagicMock(return_value={}))
+    monkeypatch.setattr(line_webhook, "append_transaction_row", MagicMock())
+    monkeypatch.setattr(line_webhook, "_reply_with_quick_reply", MagicMock())
+
+    # 先記帳讓 undo 狀態就位
+    _post(client, [_message_event("Uxxx", event_id="01BOOK")])
+    assert "Uxxx" in line_webhook._pending_undo
+
+    # 送撤銷指令
+    delete = MagicMock(return_value=1)
+    monkeypatch.setattr(line_webhook, "delete_transaction_rows", delete)
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    undo_event = _message_event("Uxxx", event_id="02UNDO")
+    undo_event["message"]["text"] = "❌ 刪除上一筆"
+    _post(client, [undo_event])
+
+    delete.assert_called_once()
+    assert "Uxxx" not in line_webhook._pending_undo
+    reply.assert_called_once()
+    assert "✅" in reply.call_args.args[1]
+
+
+def test_undo_without_pending_replies_timeout_message(client, monkeypatch):
+    """沒有 undo 暫存(逾時或從未記帳)時,回覆逾時提示"""
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    event = _message_event("Uxxx", event_id="01UNDO")
+    event["message"]["text"] = "❌ 刪除上一筆"
+    _post(client, [event])
+
+    reply.assert_called_once()
+    assert "5 分鐘" in reply.call_args.args[1]
+
+
+def test_undo_delete_returns_zero_replies_not_found(client, monkeypatch):
+    """delete_transaction_rows 回傳 0(找不到列)時,回覆找不到紀錄"""
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
+    line_webhook._set_undo("Uxxx", [("個人", "some-uuid")])
+    delete = MagicMock(return_value=0)
+    monkeypatch.setattr(line_webhook, "delete_transaction_rows", delete)
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    event = _message_event("Uxxx", event_id="01UNDO")
+    event["message"]["text"] = "❌ 刪除上一筆"
+    _post(client, [event])
+
+    reply.assert_called_once()
+    assert "找不到" in reply.call_args.args[1]
+
+
+# ── 1.7 查詢 ────────────────────────────────────────────────────────────────
+
+
+def test_query_replies_with_position_summary(client, monkeypatch):
+    """送「查詢」,應呼叫 resync 並回覆含持股/損益的摘要"""
+    from app.models.schemas import AccountResyncResult, ResyncResult
+
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
+    monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=STOCK_LIST))
+
+    position = Position(
+        stock_code="2330",
+        quantity=Decimal("100"),
+        avg_cost=Decimal("500"),
+        realized_pnl=Decimal("1000"),
+    )
+    mock_result = ResyncResult(
+        accounts=[AccountResyncResult(tab_name="個人", positions=[position])]
+    )
+    monkeypatch.setattr(line_webhook, "resync", MagicMock(return_value=mock_result))
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    event = _message_event("Uxxx", event_id="01QRY")
+    event["message"]["text"] = "查詢"
+    _post(client, [event])
+
+    reply.assert_called_once()
+    text = reply.call_args.args[1]
+    assert "2330" in text
+    assert "台積電" in text
+    assert "100股" in text
+    assert "已實現損益" in text
+
+
+def test_query_oauth_expired_replies_reauth_url(client, monkeypatch):
+    """查詢時 OAuth 失效,應回覆重新授權連結"""
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
+    monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=[]))
+    monkeypatch.setattr(
+        line_webhook, "resync", MagicMock(side_effect=OAuthInvalidGrantError("expired"))
+    )
+    monkeypatch.setattr(
+        line_webhook, "build_authorization_url", MagicMock(return_value="https://example.com/reauth")
+    )
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    event = _message_event("Uxxx", event_id="01QRY")
+    event["message"]["text"] = "查詢"
+    _post(client, [event])
+
+    reply.assert_called_once()
+    assert "https://example.com/reauth" in reply.call_args.args[1]

@@ -10,6 +10,7 @@
 (LINE 查詢/LIFF/排程任務)用完即丟,下次需要再呼叫 `resync()` 重新算一次即可。
 """
 
+from collections import defaultdict
 from datetime import date as Date
 from decimal import Decimal, InvalidOperation
 
@@ -344,3 +345,107 @@ def append_transaction_row(
         insertDataOption="INSERT_ROWS",
         body={"values": [new_row]},
     ).execute()
+
+
+def delete_transaction_rows(
+    friend: FriendRecord,
+    written_rows: list[tuple[str, str]],
+    *,
+    credentials_builder=build_credentials_from_encrypted_refresh_token,
+    refresher=refresh_or_raise,
+    sheets_service_builder=lambda credentials: build(
+        "sheets", "v4", credentials=credentials, cache_discovery=False
+    ),
+    firestore_client=None,
+) -> int:
+    """依 row_uuid 批次刪除試算表中的列，回傳實際刪除數——規格 1.7"""
+    if not written_rows:
+        return 0
+
+    credentials = credentials_builder(friend.encrypted_refresh_token)
+    try:
+        refresher(credentials)
+    except OAuthInvalidGrantError:
+        mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
+        raise
+
+    service = sheets_service_builder(credentials)
+
+    try:
+        spreadsheet_meta = service.spreadsheets().get(
+            spreadsheetId=friend.spreadsheet_id
+        ).execute()
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
+        raise
+
+    sheet_id_by_title: dict[str, int] = {
+        s["properties"]["title"]: s["properties"]["sheetId"]
+        for s in spreadsheet_meta.get("sheets", [])
+    }
+
+    by_tab: dict[str, list[str]] = defaultdict(list)
+    for tab_name, row_uuid in written_rows:
+        by_tab[tab_name].append(row_uuid)
+
+    delete_requests: list[dict] = []
+    total_deleted = 0
+
+    for tab_name, uuids in by_tab.items():
+        sheet_id = sheet_id_by_title.get(tab_name)
+        if sheet_id is None:
+            continue
+
+        try:
+            response = (
+                service.spreadsheets()
+                .values()
+                .get(spreadsheetId=friend.spreadsheet_id, range=f"'{tab_name}'")
+                .execute()
+            )
+        except HttpError:
+            continue
+
+        rows = response.get("values", [])
+        if not rows:
+            continue
+
+        header_index = map_header_columns(rows[0])
+        if header_index is None:
+            continue
+
+        uuid_col = header_index.get("row_uuid")
+        if uuid_col is None:
+            continue
+
+        uuid_set = set(uuids)
+        row_indices: list[int] = []
+        for i, row in enumerate(rows):
+            if i == 0:
+                continue
+            cell = row[uuid_col] if uuid_col < len(row) else ""
+            if str(cell).strip() in uuid_set:
+                row_indices.append(i)
+
+        # 由下往上刪，避免先刪上方列後後續索引偏移
+        for row_index in sorted(row_indices, reverse=True):
+            delete_requests.append({
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": row_index,
+                        "endIndex": row_index + 1,
+                    }
+                }
+            })
+            total_deleted += 1
+
+    if delete_requests:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=friend.spreadsheet_id,
+            body={"requests": delete_requests},
+        ).execute()
+
+    return total_deleted

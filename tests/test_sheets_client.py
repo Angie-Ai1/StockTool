@@ -424,6 +424,91 @@ def test_append_transaction_row_marks_needs_reauth_on_oauth_failure(monkeypatch)
     mark_needs_reauth.assert_called_once_with("U123456", firestore_client=ANY)
 
 
+# --- delete_transaction_rows -------------------------------------------------------
+
+
+def _fake_sheet_values_with_uuids(uuids: list[str]) -> dict:
+    """產生含指定 row_uuid 的假 spreadsheet values 回應"""
+    rows = [HEADER_ROW]
+    for i, uid in enumerate(uuids):
+        rows.append([uid, f"2026-06-{i+1:02d}", "買", "2330", "10", "6000", ""])
+    return {"values": rows}
+
+
+def _fake_spreadsheet_meta(tab_name: str = "個人帳", sheet_id: int = 0) -> dict:
+    return {
+        "sheets": [{"properties": {"title": tab_name, "sheetId": sheet_id}}]
+    }
+
+
+def test_delete_transaction_rows_deletes_matching_rows():
+    """找到 row_uuid 對應的列並呼叫 batchUpdate 刪除"""
+    fake_service = MagicMock()
+    fake_service.spreadsheets.return_value.get.return_value.execute.return_value = (
+        _fake_spreadsheet_meta("個人帳", sheet_id=42)
+    )
+    fake_service.spreadsheets.return_value.values.return_value.get.return_value.execute.return_value = (
+        _fake_sheet_values_with_uuids(["uuid-1", "uuid-2", "uuid-3"])
+    )
+
+    deleted = sheets_client.delete_transaction_rows(
+        _fake_friend(),
+        [("個人帳", "uuid-2")],
+        credentials_builder=lambda enc: MagicMock(),
+        refresher=MagicMock(),
+        sheets_service_builder=lambda credentials: fake_service,
+    )
+
+    assert deleted == 1
+    batch_call = fake_service.spreadsheets.return_value.batchUpdate
+    batch_call.assert_called_once()
+    requests = batch_call.call_args.kwargs["body"]["requests"]
+    assert len(requests) == 1
+    dim_range = requests[0]["deleteDimension"]["range"]
+    assert dim_range["sheetId"] == 42
+    assert dim_range["startIndex"] == 2  # header=0, uuid-1=1, uuid-2=2
+
+
+def test_delete_transaction_rows_returns_zero_when_uuid_not_found():
+    """UUID 不存在時回傳 0,不呼叫 batchUpdate"""
+    fake_service = MagicMock()
+    fake_service.spreadsheets.return_value.get.return_value.execute.return_value = (
+        _fake_spreadsheet_meta("個人帳", sheet_id=0)
+    )
+    fake_service.spreadsheets.return_value.values.return_value.get.return_value.execute.return_value = (
+        _fake_sheet_values_with_uuids(["uuid-1"])
+    )
+
+    deleted = sheets_client.delete_transaction_rows(
+        _fake_friend(),
+        [("個人帳", "uuid-not-exist")],
+        credentials_builder=lambda enc: MagicMock(),
+        refresher=MagicMock(),
+        sheets_service_builder=lambda credentials: fake_service,
+    )
+
+    assert deleted == 0
+    fake_service.spreadsheets.return_value.batchUpdate.assert_not_called()
+
+
+def test_delete_transaction_rows_raises_on_oauth_failure(monkeypatch):
+    """OAuth 失效時往上拋並標記 needs_reauth"""
+    mark_needs_reauth = MagicMock()
+    monkeypatch.setattr(sheets_client, "mark_needs_reauth", mark_needs_reauth)
+
+    with pytest.raises(OAuthInvalidGrantError):
+        sheets_client.delete_transaction_rows(
+            _fake_friend(),
+            [("個人帳", "uuid-1")],
+            credentials_builder=lambda enc: MagicMock(),
+            refresher=lambda creds: (_ for _ in ()).throw(OAuthInvalidGrantError("boom")),
+            sheets_service_builder=MagicMock(),
+            firestore_client=MagicMock(),
+        )
+
+    mark_needs_reauth.assert_called_once_with("U123456", firestore_client=ANY)
+
+
 def test_append_transaction_row_marks_needs_reauth_on_404(monkeypatch):
     from googleapiclient.errors import HttpError
 
