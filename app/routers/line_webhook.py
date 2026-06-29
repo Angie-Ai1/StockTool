@@ -268,6 +268,8 @@ def _execute_booking_by_tag(
     friend: FriendRecord,
     transactions: list,
     stock_list: list[StockQuote],
+    *,
+    extra_errors: list[str] | None = None,
 ) -> None:
     """多帳戶且全部已標籤:依 account_tag 分組各自記帳,合併成一則回覆"""
     by_tab: dict[str, list] = defaultdict(list)
@@ -293,6 +295,8 @@ def _execute_booking_by_tag(
             _reply_text(reply_token, "試算表連線異常,請稍後再試")
         return
 
+    if extra_errors:
+        all_errors = extra_errors + all_errors
     reply_text = _format_booking_reply(all_successes, all_errors)
     if all_successes:
         _set_undo(friend.line_user_id, all_written_rows)
@@ -428,7 +432,7 @@ def _handle_add_tab(reply_token: str, friend: FriendRecord, tab_name: str) -> No
         return
     _reply_text(
         reply_token,
-        f"✅ 已新增帳戶分頁「{tab_name}」！\n記帳時輸入帳戶標籤（例如：買 台積電 100 85000 #{tab_name}）可直接寫入此分頁。",
+        f"✅ 已新增帳戶分頁「{tab_name}」！\n多帳戶記帳時，可在開頭加帳戶標籤（例如：{tab_name}/買 台積電 100 85000）直接寫入此分頁。",
     )
 
 
@@ -601,10 +605,16 @@ def _handle_text_message(event: MessageEvent) -> None:
         txn.account_tag and txn.account_tag in tabs for txn in parse_result.transactions
     )
     if all_tagged:
-        _execute_booking_by_tag(event.reply_token, friend, parse_result.transactions, stock_list)
+        _execute_booking_by_tag(
+            event.reply_token, friend, parse_result.transactions, stock_list,
+            extra_errors=parse_errors,
+        )
     else:
         _set_pending(line_user_id, parse_result.transactions, tabs)
-        _reply_with_quick_reply(event.reply_token, "請問要記在哪個帳戶?", tabs[:13])
+        prompt = "請問要記在哪個帳戶?"
+        if parse_errors:
+            prompt = "⚠️ 以下略過:\n" + "\n".join(f"• {e}" for e in parse_errors) + "\n\n" + prompt
+        _reply_with_quick_reply(event.reply_token, prompt, tabs[:13])
 
 
 @router.post("/line/webhook")
