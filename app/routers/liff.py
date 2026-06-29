@@ -110,7 +110,7 @@ def sheets_sync(body: SyncRequest) -> dict[str, str]:
     friend = get_friend_by_spreadsheet_id(body.spreadsheet_id)
     if friend is None:
         raise HTTPException(status_code=404, detail="試算表未連結")
-    if friend.status is FriendStatus.NEEDS_REAUTH:
+    if friend.status == FriendStatus.NEEDS_REAUTH:
         raise HTTPException(status_code=401, detail="需要重新授權")
     try:
         resync(friend, get_cached_stock_list())
@@ -135,7 +135,7 @@ def liff_summary(authorization: str = Header(...)) -> LiffSummaryResponse:
     if friend is None:
         return LiffSummaryResponse(linked=False)
 
-    if friend.status is FriendStatus.NEEDS_REAUTH:
+    if friend.status == FriendStatus.NEEDS_REAUTH:
         return LiffSummaryResponse(linked=True, status=FriendStatus.NEEDS_REAUTH)
 
     stock_list = get_cached_stock_list()
