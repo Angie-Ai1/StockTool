@@ -370,12 +370,12 @@ def _format_summary_columns(service, spreadsheet_id: str, sheet_id: int) -> None
                 "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.##"}}},
                 "fields": "userEnteredFormat.numberFormat",
             }},
-            # 統計摘要框線 I1:Q33
+            # 統計摘要框線 I1:Q33（內框線比照流水帳用 BDBDBD，避免太淡看不見）
             {"updateBorders": {
                 "range": _cells(0, TIDX + 1, SCOL, SEND),
                 "top": _border(), "bottom": _border(),
                 "left": _border(), "right": _border(),
-                "innerHorizontal": _border("E0E0E0"), "innerVertical": _border("E0E0E0"),
+                "innerHorizontal": _border(), "innerVertical": _border(),
             }},
             # 欄寬：I 個股 / J-Q 數字欄
             {"updateDimensionProperties": {"range": _col(8, 9), "properties": {"pixelSize": 130}, "fields": "pixelSize"}},
