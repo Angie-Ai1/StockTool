@@ -423,6 +423,12 @@ def _format_summary_columns(service, spreadsheet_id: str, sheet_id: int) -> None
                 "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.##"}}},
                 "fields": "userEnteredFormat.numberFormat",
             }},
+            # 數字欄 J-Q 置中（個股名稱 I 維持靠左）
+            {"repeatCell": {
+                "range": _cells(TOTAL_I, BLOCK_END, 9, SEND),
+                "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER"}},
+                "fields": "userEnteredFormat.horizontalAlignment",
+            }},
             # 統計摘要框線 I1:Q33（內框線比照流水帳用 BDBDBD，避免太淡看不見）
             {"updateBorders": {
                 "range": _cells(TOTAL_I, BLOCK_END, SCOL, SEND),
