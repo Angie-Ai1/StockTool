@@ -49,6 +49,15 @@ STATUS_OVERSOLD = "⚠️ 賣出超過庫存,請修正"
 
 MAX_SUMMARY_STOCKS = 30
 
+# 統計摘要版面（Sheets 1-indexed 列號）：合計列在最上面 row1、標頭兩列在 row2-3、
+# 個股資料從 row4 起。標頭兩列（含合計列）凍結，捲動個股時保持可見。
+SUMMARY_TOTAL_ROW = 1
+SUMMARY_TITLE_ROW = 2
+SUMMARY_HEADER_ROW = 3
+SUMMARY_FIRST_STOCK_ROW = 4
+SUMMARY_LAST_STOCK_ROW = SUMMARY_FIRST_STOCK_ROW + MAX_SUMMARY_STOCKS - 1  # 33
+SUMMARY_FROZEN_ROWS = 3  # 凍結 row1 合計 + row2-3 標頭（流水帳前兩列也會一併凍結，為共用版面限制）
+
 
 def copy_template_to_drive(
     credentials: Credentials, template_id: str, file_name: str = DEFAULT_SPREADSHEET_NAME
@@ -196,19 +205,34 @@ def _write_summary_formulas(service, spreadsheet_id: str, tab_title: str) -> Non
     """重寫統計摘要公式區（I1:Q33）。
     每次 resync 都呼叫，確保即使之前因 INSERT_ROWS 造成偏移，也能恢復到正確位置。
 
+    版面：合計列在 row1、標頭兩列在 row2-3、個股從 row4 起（見 SUMMARY_*_ROW 常數）。
     今日收盤價（N 欄）用 VLOOKUP 引用後端每次 resync 寫入的隱藏報價參考區 S:T
     （見 `_write_price_reference`）；買進平均價/未實現/已實現損益則由 N、K、L 等
     欄位即時運算，使用者編輯流水帳時會跟著重算（收盤價要等下次 resync 才更新）。
     """
-    data_end_row = 2 + MAX_SUMMARY_STOCKS  # Sheets row 32（最後個股列）
+    first = SUMMARY_FIRST_STOCK_ROW       # 個股第一列（row 4）
+    last = SUMMARY_LAST_STOCK_ROW         # 個股最後一列（row 33）
     price_end_row = 1 + MAX_SUMMARY_STOCKS  # 報價參考區 S2:T31 的最後一列
 
+    # row1：合計（彙總 row4~row33 的個股）
     summary: list[list[str]] = [
+        [
+            "合計", "",
+            f"=SUM(K{first}:K{last})",
+            f"=SUM(L{first}:L{last})",
+            f"=SUM(M{first}:M{last})",
+            "",  # 今日收盤價無合計
+            "",  # 買進平均價無合計
+            f"=SUM(P{first}:P{last})",
+            f"=SUM(Q{first}:Q{last})",
+        ],
+        # row2：標題
         ["📊 統計摘要", "", "", "", "", "", "", "", ""],
+        # row3：欄位標頭
         ["個股", "持股數", "買入金額", "賣出金額", "配息收入", "今日收盤價", "買進平均價", "未實現損益", "已實現損益"],
     ]
     for n in range(1, MAX_SUMMARY_STOCKS + 1):
-        sr = 2 + n
+        sr = SUMMARY_HEADER_ROW + n  # 個股列：row 4..33
         ir = f"I{sr}"
         buy_qty = f'SUMIFS($E$2:$E$2000,$C$2:$C$2000,"買進",$D$2:$D$2000,{ir})'
         sell_qty = f'SUMIFS($E$2:$E$2000,$C$2:$C$2000,"賣出",$D$2:$D$2000,{ir})'
@@ -231,16 +255,6 @@ def _write_summary_formulas(service, spreadsheet_id: str, tab_title: str) -> Non
             # 已實現損益 Q = 賣出金額 - 賣出股數 × 買進平均價
             f'=IF(OR({ir}="",O{sr}=""),"",L{sr}-{sell_qty}*O{sr})',
         ])
-    summary.append([
-        "合計", "",
-        f"=SUM(K3:K{data_end_row})",
-        f"=SUM(L3:L{data_end_row})",
-        f"=SUM(M3:M{data_end_row})",
-        "",  # 今日收盤價無合計
-        "",  # 買進平均價無合計
-        f"=SUM(P3:P{data_end_row})",
-        f"=SUM(Q3:Q{data_end_row})",
-    ])
 
     service.spreadsheets().values().update(
         spreadsheetId=spreadsheet_id,
@@ -298,9 +312,9 @@ def _hex(h: str) -> dict:
 def _format_summary_columns(service, spreadsheet_id: str, sheet_id: int) -> None:
     """統計摘要區（I1:Q33）的視覺格式 —— 冪等，每次 resync 都套用。
 
-    先 unmerge 再 merge I1:Q1，讓舊版只有 I:M 五欄的分頁能無痛升級到含損益的
-    九欄版面；同時隱藏後端寫入收盤價用的報價參考區 S:T。所有請求都是冪等的
-    （repeatCell/updateBorders/updateDimensionProperties/merge），重複套用不會疊加。
+    版面：合計列 row1、標題 row2、欄位標頭 row3、個股 row4~row33。先 unmerge 涵蓋
+    row1-3 的範圍再 merge 新標題列 I2:Q2，讓舊版（標題在 row1、I:M 五欄）能無痛升級；
+    並凍結前三列（合計+標頭兩列）、隱藏報價參考區 S:T。所有請求皆冪等，重複套用不會疊加。
     """
     def _cells(r0: int, r1: int, c0: int, c1: int) -> dict:
         return {"sheetId": sheet_id, "startRowIndex": r0, "endRowIndex": r1, "startColumnIndex": c0, "endColumnIndex": c1}
@@ -313,17 +327,27 @@ def _format_summary_columns(service, spreadsheet_id: str, sheet_id: int) -> None
 
     SCOL = 8   # Column I
     SEND = 17  # Column R exclusive（I~Q，九欄）
-    TIDX = MAX_SUMMARY_STOCKS + 2  # 0-indexed row index for 合計（row 33 → 32）
+    # 0-indexed 列：合計 row1→0、標題 row2→1、標頭 row3→2、個股 row4~33→3~32、區塊底→33
+    TOTAL_I = SUMMARY_TOTAL_ROW - 1        # 0
+    TITLE_I = SUMMARY_TITLE_ROW - 1        # 1
+    HEADER_I = SUMMARY_HEADER_ROW - 1      # 2
+    STOCK_I0 = SUMMARY_FIRST_STOCK_ROW - 1  # 3
+    BLOCK_END = SUMMARY_LAST_STOCK_ROW      # 33（exclusive 結尾，剛好等於最後一列列號）
     PNL_FMT = {"type": "NUMBER", "pattern": "#,##0;[Red]-#,##0"}  # 損益欄：負值標紅
 
     service.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
         body={"requests": [
-            # 統計摘要標題列 I1:Q1 合併（先解舊合併以相容 I:M 舊版面）+ 樣式
-            {"unmergeCells": {"range": _cells(0, 1, SCOL, SEND)}},
-            {"mergeCells": {"range": _cells(0, 1, SCOL, SEND), "mergeType": "MERGE_ALL"}},
+            # 凍結前三列（合計 + 標頭兩列），捲動個股時保持可見
+            {"updateSheetProperties": {
+                "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": SUMMARY_FROZEN_ROWS}},
+                "fields": "gridProperties.frozenRowCount",
+            }},
+            # 標題列 I2:Q2 合併（先 unmerge row1-3 範圍以相容舊版面）+ 樣式
+            {"unmergeCells": {"range": _cells(TOTAL_I, HEADER_I + 1, SCOL, SEND)}},
+            {"mergeCells": {"range": _cells(TITLE_I, TITLE_I + 1, SCOL, SEND), "mergeType": "MERGE_ALL"}},
             {"repeatCell": {
-                "range": _cells(0, 1, SCOL, SEND),
+                "range": _cells(TITLE_I, TITLE_I + 1, SCOL, SEND),
                 "cell": {"userEnteredFormat": {
                     "backgroundColor": _hex("EFEFEF"),
                     "textFormat": {"bold": True},
@@ -331,48 +355,48 @@ def _format_summary_columns(service, spreadsheet_id: str, sheet_id: int) -> None
                 }},
                 "fields": "userEnteredFormat(backgroundColor,textFormat.bold,horizontalAlignment)",
             }},
-            # 欄位標題列 I2:Q2
+            # 欄位標頭列 I3:Q3
             {"repeatCell": {
-                "range": _cells(1, 2, SCOL, SEND),
+                "range": _cells(HEADER_I, HEADER_I + 1, SCOL, SEND),
                 "cell": {"userEnteredFormat": {
                     "backgroundColor": _hex("F5F5F5"),
                     "textFormat": {"bold": True},
                 }},
                 "fields": "userEnteredFormat(backgroundColor,textFormat.bold)",
             }},
-            # 合計列加粗
+            # 合計列（row1）加粗
             {"repeatCell": {
-                "range": _cells(TIDX, TIDX + 1, SCOL, SEND),
+                "range": _cells(TOTAL_I, TOTAL_I + 1, SCOL, SEND),
                 "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
                 "fields": "userEnteredFormat.textFormat.bold",
             }},
-            # 數字格式：金額欄 K-M（資料列 + 合計列）
+            # 數字格式：金額欄 K-M（合計列 + 個股列；標題/標頭為文字不受影響）
             {"repeatCell": {
-                "range": _cells(2, TIDX + 1, 10, 13),
+                "range": _cells(TOTAL_I, BLOCK_END, 10, 13),
                 "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "#,##0"}}},
                 "fields": "userEnteredFormat.numberFormat",
             }},
-            # 數字格式：損益欄 P-Q（資料列 + 合計列，負值標紅）
+            # 數字格式：損益欄 P-Q（合計列 + 個股列，負值標紅）
             {"repeatCell": {
-                "range": _cells(2, TIDX + 1, 15, 17),
+                "range": _cells(TOTAL_I, BLOCK_END, 15, 17),
                 "cell": {"userEnteredFormat": {"numberFormat": PNL_FMT}},
                 "fields": "userEnteredFormat.numberFormat",
             }},
-            # 數字格式：收盤價 N / 買進平均價 O（資料列，含小數）
+            # 數字格式：收盤價 N / 買進平均價 O（個股列，含小數）
             {"repeatCell": {
-                "range": _cells(2, TIDX, 13, 15),
+                "range": _cells(STOCK_I0, BLOCK_END, 13, 15),
                 "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.##"}}},
                 "fields": "userEnteredFormat.numberFormat",
             }},
-            # 數字格式：持股欄 J（資料列，不含合計）
+            # 數字格式：持股欄 J（個股列）
             {"repeatCell": {
-                "range": _cells(2, TIDX, 9, 10),
+                "range": _cells(STOCK_I0, BLOCK_END, 9, 10),
                 "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.##"}}},
                 "fields": "userEnteredFormat.numberFormat",
             }},
             # 統計摘要框線 I1:Q33（內框線比照流水帳用 BDBDBD，避免太淡看不見）
             {"updateBorders": {
-                "range": _cells(0, TIDX + 1, SCOL, SEND),
+                "range": _cells(TOTAL_I, BLOCK_END, SCOL, SEND),
                 "top": _border(), "bottom": _border(),
                 "left": _border(), "right": _border(),
                 "innerHorizontal": _border(), "innerVertical": _border(),
@@ -495,8 +519,11 @@ def resync(
             continue  # 標題列結構不符,不是帳戶分頁——規格 1.6
 
         # 首次 resync 時（含舊分頁升級）套用流水帳一次性視覺格式（內含公式寫入）；
-        # 已有摘要的分頁只重寫公式區，修正任何因舊版 INSERT_ROWS 造成的偏移
-        has_summary = len(rows[0]) > 8 and rows[0][8] == "📊 統計摘要"
+        # 已有摘要的分頁只重寫公式區，修正任何因舊版 INSERT_ROWS 造成的偏移。
+        # 偵測 I 欄前三列是否出現摘要標記：相容舊版（標題在 row1）與新版（合計在
+        # row1、標題在 row2），只要看得到任一標記就視為已建過摘要，不再跑一次性格式。
+        col_i_top = [r[8] if len(r) > 8 else "" for r in rows[:3]]
+        has_summary = "📊 統計摘要" in col_i_top or "合計" in col_i_top
         if has_summary:
             _write_summary_formulas(service, friend.spreadsheet_id, title)
         else:
@@ -793,7 +820,7 @@ def create_account_tab(
 
     format_requests: list[dict] = [
         {"updateSheetProperties": {
-            "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}},
+            "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": SUMMARY_FROZEN_ROWS}},
             "fields": "gridProperties.frozenRowCount",
         }},
         {"repeatCell": {
