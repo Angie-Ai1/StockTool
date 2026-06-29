@@ -79,11 +79,14 @@ def _parse_date(raw: str) -> Date:
     # FORMATTED_VALUE 會回傳 serial number（如 46201 代表 2026-06-28）
     if raw.isdigit():
         return Date(1899, 12, 30) + timedelta(days=int(raw))
-    for candidate in (raw, raw.replace("/", "-")):
+    # 台灣語系預設格式為 yyyy/M/d（不補零），fromisoformat 不接受無補零格式，
+    # 改用 Date(y, m, d) constructor 直接解析任意分隔與無補零日期。
+    parts = raw.replace("/", "-").split("-")
+    if len(parts) == 3:
         try:
-            return Date.fromisoformat(candidate)
-        except ValueError:
-            continue
+            return Date(int(parts[0]), int(parts[1]), int(parts[2]))
+        except (ValueError, OverflowError):
+            pass
     raise ValueError(f"無法辨識的日期「{raw}」")
 
 
@@ -189,10 +192,11 @@ def _write_status_column(
     ).execute()
 
 
-def _apply_tab_format(service, spreadsheet_id: str, sheet_id: int, tab_title: str) -> None:
-    """統計摘要公式、條件格式、表格線——新分頁建立或首次 resync 時呼叫一次。"""
+def _write_summary_formulas(service, spreadsheet_id: str, tab_title: str) -> None:
+    """重寫統計摘要公式區（I1:M33）。
+    每次 resync 都呼叫，確保即使之前因 INSERT_ROWS 造成偏移，也能恢復到正確位置。
+    """
     data_end_row = 2 + MAX_SUMMARY_STOCKS  # Sheets row 32（最後個股列）
-    total_row = data_end_row + 1           # Sheets row 33（合計列）
 
     summary: list[list[str]] = [
         ["📊 統計摘要", "", "", "", ""],
@@ -225,6 +229,11 @@ def _apply_tab_format(service, spreadsheet_id: str, sheet_id: int, tab_title: st
         valueInputOption="USER_ENTERED",
         body={"values": summary},
     ).execute()
+
+
+def _apply_tab_format(service, spreadsheet_id: str, sheet_id: int, tab_title: str) -> None:
+    """統計摘要公式 + 一次性格式設定（邊框、欄寬、條件格式）——新分頁或首次 resync 時呼叫。"""
+    _write_summary_formulas(service, spreadsheet_id, tab_title)
 
     def _hex(h: str) -> dict:
         h = h.lstrip("#")
@@ -381,7 +390,10 @@ def resync(
         if header_index is None:
             continue  # 標題列結構不符,不是帳戶分頁——規格 1.6
 
-        # 首次 resync 時（或舊分頁升級時）套用統計摘要與視覺格式
+        # 每次 resync 都重寫公式區，修正任何因舊版 INSERT_ROWS 造成的偏移
+        _write_summary_formulas(service, friend.spreadsheet_id, title)
+
+        # 首次 resync 時（或舊分頁升級時）套用一次性視覺格式
         has_summary = len(rows[0]) > 8 and rows[0][8] == "📊 統計摘要"
         if not has_summary:
             _apply_tab_format(service, friend.spreadsheet_id, sheet_id, title)
@@ -480,7 +492,8 @@ def append_transaction_row(
     if header_index is None:
         raise ValueError(f"「{tab_name}」標題列結構不符規格")
 
-    num_cols = len(header_rows[0])
+    # 只寫 A–G 欄（REQUIRED_HEADERS 範圍），避免 INSERT_ROWS 把 I–M 的統計摘要往下推
+    num_cols = len(REQUIRED_HEADERS)
     new_row = [""] * num_cols
     field_values = {
         "row_uuid": txn.row_uuid,
@@ -495,11 +508,12 @@ def append_transaction_row(
         if col_name in field_values and col_idx < num_cols:
             new_row[col_idx] = field_values[col_name]
 
+    # OVERWRITE 不插入新列，直接寫到下一個空列，統計摘要列不被往下推。
     service.spreadsheets().values().append(
         spreadsheetId=friend.spreadsheet_id,
         range=f"'{tab_name}'!A2",
         valueInputOption="USER_ENTERED",
-        insertDataOption="INSERT_ROWS",
+        insertDataOption="OVERWRITE",
         body={"values": [new_row]},
     ).execute()
 

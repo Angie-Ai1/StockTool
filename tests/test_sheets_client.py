@@ -221,7 +221,8 @@ def test_resync_registers_recognized_tabs_and_ignores_others(monkeypatch):
     assert result.accounts[0].positions == [
         Position(stock_code="2330", quantity=Decimal("10"), avg_cost=Decimal("600"))
     ]
-    fake_service.spreadsheets.return_value.values.return_value.update.assert_called_once()
+    # update 被呼叫兩次：一次 _write_summary_formulas，一次 _write_status_column
+    assert fake_service.spreadsheets.return_value.values.return_value.update.call_count == 2
     update_cache.assert_called_once_with("U123456", ["個人帳"], firestore_client=ANY)
 
 
