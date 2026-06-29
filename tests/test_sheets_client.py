@@ -185,7 +185,7 @@ def _fake_service_with_tabs():
     fake_service.spreadsheets.return_value.get.return_value.execute.return_value = {
         "sheets": [
             {"properties": {"title": "個人帳", "sheetId": 0}},
-            {"properties": {"title": "操作面板", "sheetId": 1}},
+            {"properties": {"title": "使用說明", "sheetId": 1}},
         ]
     }
 
@@ -221,8 +221,8 @@ def test_resync_registers_recognized_tabs_and_ignores_others(monkeypatch):
     assert result.accounts[0].positions == [
         Position(stock_code="2330", quantity=Decimal("10"), avg_cost=Decimal("600"))
     ]
-    # update 被呼叫兩次：一次 _write_summary_formulas，一次 _write_status_column
-    assert fake_service.spreadsheets.return_value.values.return_value.update.call_count == 2
+    # update 被呼叫三次：_write_summary_formulas、_write_price_reference、_write_status_column
+    assert fake_service.spreadsheets.return_value.values.return_value.update.call_count == 3
     update_cache.assert_called_once_with("U123456", ["個人帳"], firestore_client=ANY)
 
 
