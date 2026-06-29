@@ -56,7 +56,7 @@ def apply_cash_dividend(position: Position, amount: Decimal) -> Position:
         raise ValueError("金額必須大於 0")
     if position.quantity <= 0:
         raise ValueError("目前無庫存,無法套用配息")
-    total_cost = position.avg_cost * position.quantity - amount
+    total_cost = max(position.avg_cost * position.quantity - amount, Decimal("0"))
     return position.model_copy(update={"avg_cost": total_cost / position.quantity})
 
 
@@ -68,13 +68,17 @@ def compute_unrealized_pnl(position: Position, closing_price: Decimal) -> Decima
 def apply_transaction(position: Position, txn: ParsedTransaction) -> Position:
     """依 ParsedTransaction.action 分派到對應的均價/損益更新規則"""
     if txn.action is TransactionAction.BUY:
-        assert txn.quantity is not None and txn.amount is not None
+        if txn.quantity is None or txn.amount is None:
+            raise ValueError("買進需要數量與金額")
         return apply_buy(position, txn.quantity, txn.amount)
     if txn.action is TransactionAction.SELL:
-        assert txn.quantity is not None and txn.amount is not None
+        if txn.quantity is None or txn.amount is None:
+            raise ValueError("賣出需要數量與金額")
         return apply_sell(position, txn.quantity, txn.amount)
     if txn.action is TransactionAction.STOCK_DIVIDEND:
-        assert txn.quantity is not None
+        if txn.quantity is None:
+            raise ValueError("配股需要股數")
         return apply_stock_dividend(position, txn.quantity)
-    assert txn.amount is not None
+    if txn.amount is None:
+        raise ValueError("配息需要金額")
     return apply_cash_dividend(position, txn.amount)

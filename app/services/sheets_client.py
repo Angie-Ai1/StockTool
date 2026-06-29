@@ -250,7 +250,7 @@ def _apply_tab_format(service, spreadsheet_id: str, sheet_id: int, tab_title: st
 
     SCOL = 8   # Column I
     SEND = 13  # Column N exclusive（I~M）
-    TIDX = total_row - 1  # 0-indexed row index for 合計（row 33 → 32）
+    TIDX = MAX_SUMMARY_STOCKS + 2  # 0-indexed row index for 合計（row 33 → 32）
 
     service.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
@@ -492,7 +492,7 @@ def append_transaction_row(
     if header_index is None:
         raise ValueError(f"「{tab_name}」標題列結構不符規格")
 
-    # 只寫 A–G 欄（REQUIRED_HEADERS 範圍），避免 INSERT_ROWS 把 I–M 的統計摘要往下推
+    # 只寫 A–G 欄（REQUIRED_HEADERS 範圍），I–M 的統計摘要不受影響
     num_cols = len(REQUIRED_HEADERS)
     new_row = [""] * num_cols
     field_values = {
@@ -508,12 +508,21 @@ def append_transaction_row(
         if col_name in field_values and col_idx < num_cols:
             new_row[col_idx] = field_values[col_name]
 
-    # OVERWRITE 不插入新列，直接寫到下一個空列，統計摘要列不被往下推。
-    service.spreadsheets().values().append(
+    # 讀取 A 欄（row_uuid）計算下一個空列。
+    # 不用 append+OVERWRITE：OVERWRITE 的表格邊界偵測會把 I–M 欄的統計公式算進去，
+    # 導致每次都寫到同一列（永遠覆蓋第一筆）。用 update 直接指定列號最可靠。
+    uuid_col = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=friend.spreadsheet_id, range=f"'{tab_name}'!A:A")
+        .execute()
+    )
+    next_row = max(len(uuid_col.get("values", [])) + 1, 2)
+
+    service.spreadsheets().values().update(
         spreadsheetId=friend.spreadsheet_id,
-        range=f"'{tab_name}'!A2",
+        range=f"'{tab_name}'!A{next_row}",
         valueInputOption="USER_ENTERED",
-        insertDataOption="OVERWRITE",
         body={"values": [new_row]},
     ).execute()
 
