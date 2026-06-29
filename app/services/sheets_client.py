@@ -11,7 +11,7 @@
 """
 
 from collections import defaultdict
-from datetime import date as Date
+from datetime import date as Date, timedelta
 from decimal import Decimal, InvalidOperation
 
 from google.oauth2.credentials import Credentials
@@ -73,6 +73,10 @@ def _cell(row: list[str], header_index: dict[str, int], header: str) -> str:
 
 
 def _parse_date(raw: str) -> Date:
+    # Sheets 以 USER_ENTERED 寫入日期字串時，若儲存格無 DATE 格式，
+    # FORMATTED_VALUE 會回傳 serial number（如 46201 代表 2026-06-28）
+    if raw.isdigit():
+        return Date(1899, 12, 30) + timedelta(days=int(raw))
     for candidate in (raw, raw.replace("/", "-")):
         try:
             return Date.fromisoformat(candidate)
@@ -333,7 +337,7 @@ def append_transaction_row(
     new_row = [""] * num_cols
     field_values = {
         "row_uuid": txn.row_uuid,
-        "日期": txn.date.strftime("%Y/%m/%d"),
+        "日期": f"=DATE({txn.date.year},{txn.date.month},{txn.date.day})",
         "動作": txn.action.value,
         "股票代碼/名稱": txn.stock_query,
         "數量": str(txn.quantity) if txn.quantity is not None else "",
