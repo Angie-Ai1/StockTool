@@ -106,7 +106,11 @@ class SyncRequest(BaseModel):
 
 @router.post("/sheets/sync")
 def sheets_sync(body: SyncRequest) -> dict[str, str]:
-    """由試算表「操作面板」Apps Script 呼叫，以 spreadsheet_id 識別使用者並觸發 resync——規格 1.8"""
+    """以 spreadsheet_id 識別使用者並觸發 resync——規格 1.8。
+
+    通用同步入口（不依賴 id_token），供外部以試算表 ID 觸發重算；目前同步功能
+    主要由 LINE「立即同步」指令與 LIFF 開啟時自動 resync 提供。
+    """
     friend = get_friend_by_spreadsheet_id(body.spreadsheet_id)
     if friend is None:
         raise HTTPException(status_code=404, detail="試算表未連結")

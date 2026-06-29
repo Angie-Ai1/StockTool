@@ -11,7 +11,7 @@
 | Phase 0 基礎設施 | 97% | 僅缺 `ADMIN_LINE_USER_ID` |
 | Phase 1 MVP 程式碼 | ~88%（約 42/48） | 1.8 部分完成、立即同步/新增帳戶指令上線 |
 | 部署上線：基礎設施 | 100% | Cloud Run + Cloud Build CD 正常 |
-| 部署上線：功能 | ~85% | 記帳/撤銷/查詢/同步端對端驗證通過；LIFF OAuth 行動裝置修復中（debug 進行中） |
+| 部署上線：功能 | ~90% | 記帳/撤銷/查詢/同步端對端驗證通過；LIFF OAuth 行動裝置已驗證通過、debug code 已移除 |
 
 ---
 
@@ -42,7 +42,7 @@
 | ✅ | 1.5 損益引擎 | 移動加權平均、已實現/未實現損益、賣超防呆 |
 | ✅ | 1.6 試算表 resync | resync + `立即同步` LINE 指令 + `POST /sheets/sync` 端點 |
 | ✅ | 1.7 防呆撤銷與查詢 | 撤銷上一筆 + Rich Menu 查詢 |
-| 🔄 | 1.8 首次使用引導與操作面板 | follow 歡迎訊息 ✅、使用說明指令 ✅、操作面板分頁 ✅；首次使用流程引導待確認 |
+| 🔄 | 1.8 首次使用引導與使用說明頁 | follow 歡迎訊息 ✅、使用說明指令 ✅、試算表「使用說明」分頁 ✅（取代舊「操作面板」，移除按鈕/重複統計，改為純操作指南）；首次使用流程引導待確認 |
 | ✅ | 1.9 排程 | `/tick`，共享密鑰驗證，14:30 收盤任務 |
 | ⬜ | 1.10 共用通知元件 | 未開始 |
 | ✅ | 1.11 LIFF 網頁 | id_token 驗證、`/liff/summary` |
@@ -60,7 +60,7 @@
 | `GET /liff/summary` | ✅ Bearer token 驗證正常 |
 | `GET /oauth/callback` | ✅ 正常 |
 | `POST /tick` | ✅ 共享密鑰驗證正常 |
-| `POST /sheets/sync` | ✅ 供試算表操作面板呼叫 |
+| `POST /sheets/sync` | ✅ 以 spreadsheet_id 觸發 resync 的通用同步入口 |
 | `GET /oauth/liff` | ✅ LIFF 授權頁面（LIFF ID 由 settings 注入） |
 | `GET /oauth/url` | ✅ LIFF 用，驗 id_token 後回傳 Google auth URL |
 
@@ -68,10 +68,7 @@
 
 ## 下次接續
 
-1. **⚠️ LIFF OAuth debug（最優先）**：
-   - 確認 Cloud Run 環境變數：`LIFF_ID=2010536089-8QsckdO0`、`LINE_LOGIN_CHANNEL_ID=2010536089` 兩個都要有值
-   - 「系統發生問題」若確認是 LIFF_ID 遺失 → 補回後重部署
-   - 測試通過後，移除 debug code（`logs/2026-06-29_0144.md` 有完整 debug commit 清單）
+1. **✅ LIFF OAuth（已完成）**：行動裝置授權流程已驗證通過，`oauth_liff.html` 的 idToken debug 顯示已移除
 2. **試算表手動修復**：把目前已壞掉的試算表 row 1 資料剪下貼回 row 2 下方，讓標題列回到 row 1，再傳「查詢」重新同步
 3. **端對端驗證**：記帳/撤銷/查詢/同步完整流程（手機端）
 4. **1.10 共用通知元件** / **1.12 溫度感文案**（Phase 1 剩餘項目）

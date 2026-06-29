@@ -11,7 +11,7 @@
 
   方法 B ─ 建立新的 Desktop app OAuth client（任何 port 都不需設定）
     GCP Console → Credentials → 建立 OAuth 2.0 Client ID → 類型選 "Desktop app"
-    → 下載 JSON → 存到 secrets/desktop_client.json
+    → 下載 JSON → 存到 .personal/secrets/desktop_client.json
     然後執行：poetry run python scripts/update_template_sheet.py
 
 **WSL2 注意事項：**
@@ -40,7 +40,7 @@ from googleapiclient.discovery import build
 TEMPLATE_ID = "1Z6oFyaSeHz02bYXh4p1q-ckcoGd4VlUeF900WfkYVL8"
 TAB_NAME = "個人帳戶"
 
-SECRETS_DIR = Path(__file__).parent.parent / "secrets"
+SECRETS_DIR = Path(__file__).parent.parent / ".personal" / "secrets"
 DESKTOP_CLIENT = SECRETS_DIR / "desktop_client.json"
 TOKEN_CACHE = SECRETS_DIR / "admin_token.json"
 
@@ -225,125 +225,119 @@ def build_requests(sheet_id: int) -> list[dict]:
     return requests
 
 
-PANEL_TAB_NAME = "操作面板"
-SOURCE_TAB = "個人帳戶"
+GUIDE_TAB_NAME = "使用說明"
+LEGACY_PANEL_TAB_NAME = "操作面板"  # 舊版分頁，建立說明頁時一併刪除
 
-# 靜態文字區塊（RAW 寫入）
-PANEL_TEXT = [
-    ["📋 操作面板", "", ""],        # row 1
-    ["", "", ""],                    # row 2
-    ["📊 統計摘要", "", ""],         # row 3  ← stats header
-    ["動作", "總金額（元）", "總股數"],  # row 4  ← table header
-    ["買進", "", ""],                # row 5
-    ["賣出", "", ""],                # row 6
-    ["股息", "", ""],                # row 7
-    ["配股", "", ""],                # row 8
-    ["", "", ""],                    # row 9
-    ["⚙️ LINE 指令", "", ""],       # row 10  ← commands header
-    ["立即同步", "→ LINE 傳「立即同步」", ""],
-    ["新增帳戶分頁", "→ LINE 傳「新增帳戶 <名稱>」，例如：新增帳戶 海外股", ""],
+# 說明頁文字（A 欄為標題/標籤，B 欄為說明/範例），RAW 寫入。
+# 內容只教使用者「怎麼用」，不放任何按鈕或公式——同步改由 LINE 傳「立即同步」觸發。
+GUIDE_TEXT = [
+    ["📖 使用說明", ""],                                                            # 0  title
+    ["", ""],
+    ["🟢 第一次使用", ""],                                                          # 2  heading
+    ["1. 加入官方帳號好友後，點歡迎訊息裡的連結授權 Google", ""],
+    ["2. 系統會自動在你的雲端硬碟建立這份試算表", ""],
+    ["3. 之後在 LINE 記帳，資料就會自動寫進這裡", ""],
+    ["", ""],
+    ["✍️ 怎麼記帳（直接在 LINE 輸入文字）", ""],                                     # 7  heading
+    ["買 / 賣", "買 股票 股數 總金額　例：買 台積電 100 85000"],
+    ["配息", "配息 股票 金額　例：配息 0050 3000"],
+    ["配股", "配股 股票 股數　例：配股 0056 100"],
+    ["小提醒", "股票代碼或名稱皆可；單位是「股」，1 張會自動算成 1000 股；多筆請分行一次傳"],
+    ["", ""],
+    ["🔁 其他指令", ""],                                                            # 13 heading
+    ["查詢", "看目前各帳戶的持股與損益"],
+    ["撤銷", "撤回剛剛記錯的上一筆"],
+    ["立即同步", "重新計算並把最新損益寫回這份試算表"],
+    ["新增帳戶 <名稱>", "建立新的帳戶分頁，例如：新增帳戶 海外股"],
+    ["", ""],
+    ["🔄 資料怎麼流動", ""],                                                        # 19 heading
+    ["① 你在 LINE 輸入記帳文字", "↓"],
+    ["② 系統辨識股票、解析買賣／配息／配股", "↓"],
+    ["③ 寫進對應帳戶分頁左側的流水帳（A–G 欄）", "↓"],
+    ["④ 右側統計摘要（I–Q 欄）自動算出持股數、買進平均價、今日收盤價、未實現／已實現損益", ""],
+    ["", ""],
+    ["📊 怎麼查看損益", ""],                                                        # 25 heading
+    ["現在", "在 LINE 傳「查詢」或點選單「查詢」，即可看到持股損益摘要"],
+    ["即將推出", "🚧 網頁圖表版（LIFF）：美化圖表、篩選與搜尋，規劃中"],
 ]
 
-# SUMIF 公式區塊（USER_ENTERED 寫入），對應 B5:C8
-_S = SOURCE_TAB
-PANEL_FORMULAS = [
-    [f"=SUMIF('{_S}'!C:C,\"買進\",'{_S}'!F:F)", f"=SUMIF('{_S}'!C:C,\"買進\",'{_S}'!E:E)"],
-    [f"=SUMIF('{_S}'!C:C,\"賣出\",'{_S}'!F:F)", f"=SUMIF('{_S}'!C:C,\"賣出\",'{_S}'!E:E)"],
-    [f"=SUMIF('{_S}'!C:C,\"股息\",'{_S}'!F:F)", "—"],
-    ["—",                                         f"=SUMIF('{_S}'!C:C,\"配股\",'{_S}'!E:E)"],
-]
+GUIDE_TITLE_ROW = 0
+GUIDE_HEADING_ROWS = [2, 7, 13, 19, 25]
 
 
-def setup_panel_tab(service) -> None:
-    """建立「操作面板」分頁：統計摘要（SUMIF 公式）+ LINE 指令對照。"""
+def setup_guide_tab(service) -> None:
+    """建立／覆寫「使用說明」分頁：純文字操作指南，並刪除舊版「操作面板」分頁。"""
     meta = service.spreadsheets().get(spreadsheetId=TEMPLATE_ID).execute()
-    existing = [s["properties"]["title"] for s in meta["sheets"]]
-    if PANEL_TAB_NAME in existing:
-        print(f"「{PANEL_TAB_NAME}」分頁已存在，覆寫內容。")
-        panel_id = next(
-            s["properties"]["sheetId"] for s in meta["sheets"]
-            if s["properties"]["title"] == PANEL_TAB_NAME
-        )
+    title_to_id = {s["properties"]["title"]: s["properties"]["sheetId"] for s in meta["sheets"]}
+
+    # 移除舊版操作面板（若存在）
+    if LEGACY_PANEL_TAB_NAME in title_to_id:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=TEMPLATE_ID,
+            body={"requests": [{"deleteSheet": {"sheetId": title_to_id[LEGACY_PANEL_TAB_NAME]}}]},
+        ).execute()
+        print(f"已刪除舊版「{LEGACY_PANEL_TAB_NAME}」分頁。")
+
+    if GUIDE_TAB_NAME in title_to_id:
+        print(f"「{GUIDE_TAB_NAME}」分頁已存在，覆寫內容。")
+        guide_id = title_to_id[GUIDE_TAB_NAME]
     else:
         resp = service.spreadsheets().batchUpdate(
             spreadsheetId=TEMPLATE_ID,
-            body={"requests": [{"addSheet": {"properties": {"title": PANEL_TAB_NAME, "index": 0}}}]},
+            body={"requests": [{"addSheet": {"properties": {"title": GUIDE_TAB_NAME, "index": 0}}}]},
         ).execute()
-        panel_id = resp["replies"][0]["addSheet"]["properties"]["sheetId"]
-        print(f"「{PANEL_TAB_NAME}」分頁已建立（sheetId: {panel_id}）")
+        guide_id = resp["replies"][0]["addSheet"]["properties"]["sheetId"]
+        print(f"「{GUIDE_TAB_NAME}」分頁已建立（sheetId: {guide_id}）")
 
-    # 靜態文字（A 欄動作名稱 + 說明文字）
     service.spreadsheets().values().update(
         spreadsheetId=TEMPLATE_ID,
-        range=f"'{PANEL_TAB_NAME}'!A1",
+        range=f"'{GUIDE_TAB_NAME}'!A1",
         valueInputOption="RAW",
-        body={"values": PANEL_TEXT},
-    ).execute()
-
-    # SUMIF 公式（B5:C8）
-    service.spreadsheets().values().update(
-        spreadsheetId=TEMPLATE_ID,
-        range=f"'{PANEL_TAB_NAME}'!B5",
-        valueInputOption="USER_ENTERED",
-        body={"values": PANEL_FORMULAS},
+        body={"values": GUIDE_TEXT},
     ).execute()
 
     gray = {"red": 239/255, "green": 239/255, "blue": 239/255}
 
-    def _row(r0, r1, c0=0, c1=3):
-        return {"sheetId": panel_id, "startRowIndex": r0, "endRowIndex": r1,
+    def _row(r0, r1, c0=0, c1=2):
+        return {"sheetId": guide_id, "startRowIndex": r0, "endRowIndex": r1,
                 "startColumnIndex": c0, "endColumnIndex": c1}
 
+    def _col(start, end, px):
+        return {"updateDimensionProperties": {
+            "range": {"sheetId": guide_id, "dimension": "COLUMNS", "startIndex": start, "endIndex": end},
+            "properties": {"pixelSize": px}, "fields": "pixelSize",
+        }}
+
     format_requests = [
-        # 主標題（row 1）：粗體大字
+        # 主標題：粗體大字
         {"repeatCell": {
-            "range": _row(0, 1),
+            "range": _row(GUIDE_TITLE_ROW, GUIDE_TITLE_ROW + 1),
             "cell": {"userEnteredFormat": {"textFormat": {"bold": True, "fontSize": 14}}},
             "fields": "userEnteredFormat.textFormat",
         }},
-        # 統計摘要區段標題（row 3）：粗體灰底
+        # 內文自動換行
         {"repeatCell": {
-            "range": _row(2, 3),
-            "cell": {"userEnteredFormat": {"backgroundColor": gray, "textFormat": {"bold": True}}},
-            "fields": "userEnteredFormat(backgroundColor,textFormat.bold)",
+            "range": _row(0, len(GUIDE_TEXT)),
+            "cell": {"userEnteredFormat": {"wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE"}},
+            "fields": "userEnteredFormat(wrapStrategy,verticalAlignment)",
         }},
-        # 統計表格欄位標題（row 4）：粗體灰底
-        {"repeatCell": {
-            "range": _row(3, 4),
-            "cell": {"userEnteredFormat": {"backgroundColor": gray, "textFormat": {"bold": True}}},
-            "fields": "userEnteredFormat(backgroundColor,textFormat.bold)",
-        }},
-        # LINE 指令區段標題（row 10）：粗體灰底
-        {"repeatCell": {
-            "range": _row(9, 10),
-            "cell": {"userEnteredFormat": {"backgroundColor": gray, "textFormat": {"bold": True}}},
-            "fields": "userEnteredFormat(backgroundColor,textFormat.bold)",
-        }},
-        # 金額欄（B5:B8）：數字格式，千分位
-        {"repeatCell": {
-            "range": _row(4, 8, 1, 2),
-            "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "#,##0"}}},
-            "fields": "userEnteredFormat.numberFormat",
-        }},
-        # 欄寬：A=140, B=160, C=120
-        {"updateDimensionProperties": {
-            "range": {"sheetId": panel_id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1},
-            "properties": {"pixelSize": 140}, "fields": "pixelSize",
-        }},
-        {"updateDimensionProperties": {
-            "range": {"sheetId": panel_id, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2},
-            "properties": {"pixelSize": 160}, "fields": "pixelSize",
-        }},
-        {"updateDimensionProperties": {
-            "range": {"sheetId": panel_id, "dimension": "COLUMNS", "startIndex": 2, "endIndex": 3},
-            "properties": {"pixelSize": 380}, "fields": "pixelSize",
-        }},
+        # 欄寬：A=260（標籤）、B=560（說明）
+        _col(0, 1, 260),
+        _col(1, 2, 560),
     ]
+    # 各區段標題：粗體灰底
+    for heading_row in GUIDE_HEADING_ROWS:
+        format_requests.append({"repeatCell": {
+            "range": _row(heading_row, heading_row + 1),
+            "cell": {"userEnteredFormat": {"backgroundColor": gray, "textFormat": {"bold": True}}},
+            "fields": "userEnteredFormat(backgroundColor,textFormat.bold)",
+        }})
+
     service.spreadsheets().batchUpdate(
         spreadsheetId=TEMPLATE_ID,
         body={"requests": format_requests},
     ).execute()
-    print("「操作面板」統計公式與樣式設定完成。")
+    print("「使用說明」分頁文字與樣式設定完成。")
 
 
 def main() -> None:
@@ -371,8 +365,8 @@ def main() -> None:
         body={"values": [["TEMPLATE_VERSION=1"]]},
     ).execute()
 
-    print("\n建立「操作面板」分頁...")
-    setup_panel_tab(service)
+    print("\n建立「使用說明」分頁...")
+    setup_guide_tab(service)
 
     print("\n全部完成！請開啟試算表確認：")
     print(f"  https://docs.google.com/spreadsheets/d/{TEMPLATE_ID}/edit")
@@ -381,12 +375,8 @@ def main() -> None:
     print("  ☐ C 欄點任一儲存格，出現下拉選單（買進/賣出/股息/配股）")
     print("  ☐ A 欄（row_uuid）已隱藏（右鍵 → 取消隱藏 可確認）")
     print("  ☐ Z1 顯示 TEMPLATE_VERSION=1")
-    print("  ☐ 「操作面板」分頁已建立，說明文字正確")
+    print("  ☐ 「使用說明」分頁已建立，內容/排版正確，舊版「操作面板」已移除")
     print("  ☐ 試算表共用設定仍為「任何知道連結的人可以檢視」")
-    print("\n【手動步驟】在「操作面板」分頁插入按鈕：")
-    print("  1. 點選「插入 → 繪圖」，畫一個圓角矩形，輸入文字「立即同步」→ 儲存並關閉")
-    print("  2. 點選剛建立的圖形右上角 ⋮ → 指定指令碼 → 輸入 syncNow → 確認")
-    print("  3. 重複步驟 1-2，文字改「新增帳戶分頁」，指令碼改 addAccountTab")
 
 
 if __name__ == "__main__":
