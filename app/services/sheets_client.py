@@ -47,7 +47,7 @@ STATUS_OK = ""
 STATUS_INVALID_ROW = "⚠️ 無法辨識,請修正"
 STATUS_OVERSOLD = "⚠️ 賣出超過庫存,請修正"
 
-MAX_SUMMARY_STOCKS = 30
+MAX_SUMMARY_STOCKS = 97  # 個股最多 97 檔（row4~row100）
 
 # 統計摘要版面（Sheets 1-indexed 列號）：合計列在最上面 row1、標頭兩列在 row2-3、
 # 個股資料從 row4 起。標頭兩列（含合計列）凍結，捲動個股時保持可見。
@@ -55,7 +55,7 @@ SUMMARY_TOTAL_ROW = 1
 SUMMARY_TITLE_ROW = 2
 SUMMARY_HEADER_ROW = 3
 SUMMARY_FIRST_STOCK_ROW = 4
-SUMMARY_LAST_STOCK_ROW = SUMMARY_FIRST_STOCK_ROW + MAX_SUMMARY_STOCKS - 1  # 33
+SUMMARY_LAST_STOCK_ROW = SUMMARY_FIRST_STOCK_ROW + MAX_SUMMARY_STOCKS - 1  # 100
 SUMMARY_FROZEN_ROWS = 3  # 凍結 row1 合計 + row2-3 標頭，捲動個股時保持可見
 
 # 流水帳版面：標頭對齊統計摘要欄位標頭放在 row3，資料從 row4 起（row1-2 留白）。
@@ -222,7 +222,7 @@ def _write_status_column(
 
 
 def _write_summary_formulas(service, spreadsheet_id: str, tab_title: str) -> None:
-    """重寫統計摘要公式區（I1:Q33）。
+    """重寫統計摘要公式區（I1:Q100）。
     每次 resync 都呼叫，確保即使之前因 INSERT_ROWS 造成偏移，也能恢復到正確位置。
 
     版面：合計列在 row1、標頭兩列在 row2-3、個股從 row4 起（見 SUMMARY_*_ROW 常數）。
@@ -231,8 +231,8 @@ def _write_summary_formulas(service, spreadsheet_id: str, tab_title: str) -> Non
     欄位即時運算，使用者編輯流水帳時會跟著重算（收盤價要等下次 resync 才更新）。
     """
     first = SUMMARY_FIRST_STOCK_ROW       # 個股第一列（row 4）
-    last = SUMMARY_LAST_STOCK_ROW         # 個股最後一列（row 33）
-    price_end_row = 1 + MAX_SUMMARY_STOCKS  # 報價參考區 S2:T31 的最後一列
+    last = SUMMARY_LAST_STOCK_ROW         # 個股最後一列（row 100）
+    price_end_row = 1 + MAX_SUMMARY_STOCKS  # 報價參考區 S2:T98 的最後一列
 
     # 流水帳資料範圍（標頭在 row3，資料從 row4 起）——統計公式以此為加總來源
     dr = LEDGER_DATA_FIRST_ROW
@@ -241,7 +241,7 @@ def _write_summary_formulas(service, spreadsheet_id: str, tab_title: str) -> Non
     rng_e = f"$E${dr}:$E$2000"  # 數量
     rng_f = f"$F${dr}:$F$2000"  # 金額
 
-    # row1：合計（彙總 row4~row33 的個股）
+    # row1：合計（彙總 row4~row100 的個股）
     summary: list[list[str]] = [
         [
             "合計", "",
@@ -259,7 +259,7 @@ def _write_summary_formulas(service, spreadsheet_id: str, tab_title: str) -> Non
         ["個股", "持股數", "買入金額", "賣出金額", "配息收入", "今日收盤價", "買進平均價", "未實現損益", "已實現損益"],
     ]
     for n in range(1, MAX_SUMMARY_STOCKS + 1):
-        sr = SUMMARY_HEADER_ROW + n  # 個股列：row 4..33
+        sr = SUMMARY_HEADER_ROW + n  # 個股列：row 4..100
         ir = f"I{sr}"
         buy_qty = f'SUMIFS({rng_e},{rng_c},"買進",{rng_d},{ir})'
         sell_qty = f'SUMIFS({rng_e},{rng_c},"賣出",{rng_d},{ir})'
@@ -299,7 +299,7 @@ def _write_price_reference(
     header_index: dict[str, int],
     stock_list: list[StockQuote],
 ) -> None:
-    """把每檔股票今日收盤價寫進隱藏報價參考區 S2:T31，供統計摘要 N 欄 VLOOKUP 引用。
+    """把每檔股票今日收盤價寫進隱藏報價參考區 S2:T98，供統計摘要 N 欄 VLOOKUP 引用。
 
     key 用流水帳「股票代碼/名稱」的原始文字，與統計摘要 I 欄
     （`UNIQUE(FILTER(D...))`）取的值一致，VLOOKUP 才比對得到。固定寫滿
@@ -337,9 +337,9 @@ def _hex(h: str) -> dict:
 
 
 def _format_summary_columns(service, spreadsheet_id: str, sheet_id: int) -> None:
-    """統計摘要區（I1:Q33）的視覺格式 —— 冪等，每次 resync 都套用。
+    """統計摘要區（I1:Q100）的視覺格式 —— 冪等，每次 resync 都套用。
 
-    版面：合計列 row1、標題 row2、欄位標頭 row3、個股 row4~row33。先 unmerge 涵蓋
+    版面：合計列 row1、標題 row2、欄位標頭 row3、個股 row4~row100。先 unmerge 涵蓋
     row1-3 的範圍再 merge 新標題列 I2:Q2，讓舊版（標題在 row1、I:M 五欄）能無痛升級；
     並凍結前三列（合計+標頭兩列）、隱藏報價參考區 S:T。所有請求皆冪等，重複套用不會疊加。
     """
@@ -354,12 +354,12 @@ def _format_summary_columns(service, spreadsheet_id: str, sheet_id: int) -> None
 
     SCOL = 8   # Column I
     SEND = 17  # Column R exclusive（I~Q，九欄）
-    # 0-indexed 列：合計 row1→0、標題 row2→1、標頭 row3→2、個股 row4~33→3~32、區塊底→33
+    # 0-indexed 列：合計 row1→0、標題 row2→1、標頭 row3→2、個股 row4~100→3~99、區塊底→33
     TOTAL_I = SUMMARY_TOTAL_ROW - 1        # 0
     TITLE_I = SUMMARY_TITLE_ROW - 1        # 1
     HEADER_I = SUMMARY_HEADER_ROW - 1      # 2
     STOCK_I0 = SUMMARY_FIRST_STOCK_ROW - 1  # 3
-    BLOCK_END = SUMMARY_LAST_STOCK_ROW      # 33（exclusive 結尾，剛好等於最後一列列號）
+    BLOCK_END = SUMMARY_LAST_STOCK_ROW      # 100（exclusive 結尾，剛好等於最後一列列號）
     PNL_FMT = {"type": "NUMBER", "pattern": "#,##0;[Red]-#,##0"}  # 損益欄：負值標紅
 
     service.spreadsheets().batchUpdate(
@@ -370,7 +370,7 @@ def _format_summary_columns(service, spreadsheet_id: str, sheet_id: int) -> None
                 "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": SUMMARY_FROZEN_ROWS}},
                 "fields": "gridProperties.frozenRowCount",
             }},
-            # 標題列 I2:Q2 合併：先 unmerge 整個摘要區 I1:Q33，再只合併 I2:Q2。
+            # 標題列 I2:Q2 合併：先 unmerge 整個摘要區 I1:Q100，再只合併 I2:Q2。
             # 範圍涵蓋全區是為了清掉「升級插入兩列時被往下推到個股列」的殘留標題合併，
             # 否則第一檔個股那列會被合併成一欄（只剩股票名稱）。
             {"unmergeCells": {"range": _cells(TOTAL_I, BLOCK_END, SCOL, SEND)}},
@@ -429,7 +429,7 @@ def _format_summary_columns(service, spreadsheet_id: str, sheet_id: int) -> None
                 "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER"}},
                 "fields": "userEnteredFormat.horizontalAlignment",
             }},
-            # 統計摘要框線 I1:Q33（內框線比照流水帳用 BDBDBD，避免太淡看不見）
+            # 統計摘要框線 I1:Q100（內框線比照流水帳用 BDBDBD，避免太淡看不見）
             {"updateBorders": {
                 "range": _cells(TOTAL_I, BLOCK_END, SCOL, SEND),
                 "top": _border(), "bottom": _border(),
