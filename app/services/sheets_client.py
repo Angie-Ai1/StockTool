@@ -411,13 +411,13 @@ def _format_summary_columns(service, spreadsheet_id: str, sheet_id: int) -> None
 
 
 def _apply_tab_format(service, spreadsheet_id: str, sheet_id: int, tab_title: str) -> None:
-    """統計摘要公式 + 流水帳一次性格式（表格線、條件格式）——新分頁建立時呼叫。
+    """流水帳一次性格式（表格線、條件格式）——新分頁建立時呼叫。
 
-    統計摘要區的視覺格式改由 `_format_summary_columns` 在每次 resync 套用（冪等），
-    這裡只負責流水帳區那些「重複套用會疊加」的一次性設定（條件格式規則）。
+    統計摘要的公式由 `_write_summary_formulas`、視覺格式由 `_format_summary_columns`
+    各自負責，且必須「先解除合併、再寫公式」（見 resync 內呼叫順序），否則 row1 合計列
+    的 SUM 公式會被殘留的標題合併儲存格吞掉。這裡只負責流水帳區那些「重複套用會疊加」的
+    一次性設定（條件格式規則）。
     """
-    _write_summary_formulas(service, spreadsheet_id, tab_title)
-
     def _cells(r0: int, r1: int, c0: int, c1: int) -> dict:
         return {"sheetId": sheet_id, "startRowIndex": r0, "endRowIndex": r1, "startColumnIndex": c0, "endColumnIndex": c1}
 
@@ -524,14 +524,14 @@ def resync(
         # row1、標題在 row2），只要看得到任一標記就視為已建過摘要，不再跑一次性格式。
         col_i_top = [r[8] if len(r) > 8 else "" for r in rows[:3]]
         has_summary = "📊 統計摘要" in col_i_top or "合計" in col_i_top
-        if has_summary:
-            _write_summary_formulas(service, friend.spreadsheet_id, title)
-        else:
+        if not has_summary:
             _apply_tab_format(service, friend.spreadsheet_id, sheet_id, title)
 
-        # 統計摘要區格式（冪等）+ 收盤價報價參考區，每次都套用：
-        # 讓舊版 I:M 五欄分頁自動升級成含損益的九欄，並刷新今日收盤價
+        # 順序很重要：先套統計摘要格式（內含解除舊標題合併），再寫公式。
+        # 否則殘留的標題合併會吞掉 row1 合計列的 SUM 公式（只剩左上角「合計」）。
+        # 報價參考區每次都刷新，讓今日收盤價更新；舊版 I:M 分頁也在此自動升級。
         _format_summary_columns(service, friend.spreadsheet_id, sheet_id)
+        _write_summary_formulas(service, friend.spreadsheet_id, title)
         _write_price_reference(service, friend.spreadsheet_id, title, rows[1:], header_index, stock_list)
 
         positions, statuses = resync_account_tab(rows[1:], header_index, stock_list)
@@ -873,7 +873,9 @@ def create_account_tab(
     ).execute()
 
     _apply_tab_format(service, friend.spreadsheet_id, sheet_id, tab_name)
+    # 先格式（含解除合併）再寫公式，避免標題合併吞掉合計列 SUM 公式
     _format_summary_columns(service, friend.spreadsheet_id, sheet_id)
+    _write_summary_formulas(service, friend.spreadsheet_id, tab_name)
 
     # Firestore cache：把新分頁名稱加入已辨識的帳戶清單
     existing = list(friend.account_tabs_cache or [])
