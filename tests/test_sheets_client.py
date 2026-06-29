@@ -394,10 +394,9 @@ def test_append_transaction_row_appends_correct_row():
         sheets_service_builder=lambda credentials: fake_service,
     )
 
-    append_call = fake_service.spreadsheets.return_value.values.return_value.append
-    append_call.assert_called_once()
-    call_kwargs = append_call.call_args.kwargs
-    # range 必須從 A2 開始，避免 Sheets API 在只有標題列時把資料插到 row 1
+    update_call = fake_service.spreadsheets.return_value.values.return_value.update
+    update_call.assert_called_once()
+    call_kwargs = update_call.call_args.kwargs
     assert call_kwargs["range"] == "'個人帳'!A2"
     body = call_kwargs["body"]
     row = body["values"][0]

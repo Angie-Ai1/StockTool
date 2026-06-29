@@ -315,7 +315,7 @@ def test_text_message_parse_failure_replies_error(client, monkeypatch):
     _post(client, [event])
 
     reply.assert_called_once()
-    assert "解析失敗" in reply.call_args.args[1]
+    assert "讀取失敗" in reply.call_args.args[1]
 
 
 def test_text_message_booking_success_single_account(client, monkeypatch):
