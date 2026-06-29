@@ -390,12 +390,12 @@ def resync(
         if header_index is None:
             continue  # 標題列結構不符,不是帳戶分頁——規格 1.6
 
-        # 每次 resync 都重寫公式區，修正任何因舊版 INSERT_ROWS 造成的偏移
-        _write_summary_formulas(service, friend.spreadsheet_id, title)
-
-        # 首次 resync 時（或舊分頁升級時）套用一次性視覺格式
+        # 首次 resync 時（或舊分頁升級時）套用一次性視覺格式（內含公式寫入）；
+        # 已有摘要的分頁只重寫公式區，修正任何因舊版 INSERT_ROWS 造成的偏移
         has_summary = len(rows[0]) > 8 and rows[0][8] == "📊 統計摘要"
-        if not has_summary:
+        if has_summary:
+            _write_summary_formulas(service, friend.spreadsheet_id, title)
+        else:
             _apply_tab_format(service, friend.spreadsheet_id, sheet_id, title)
 
         positions, statuses = resync_account_tab(rows[1:], header_index, stock_list)

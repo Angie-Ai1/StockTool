@@ -512,6 +512,11 @@ def _handle_follow_event(event: FollowEvent) -> None:
     elif friend.status == FriendStatus.INACTIVE:
         reactivate_friend(line_user_id)
         _reply_text(event.reply_token, _build_welcome_back_text())
+    elif friend.status == FriendStatus.NEEDS_REAUTH:
+        _reply_text(
+            event.reply_token,
+            f"歡迎回來！試算表授權已過期，需要重新連結才能繼續記帳：{_liff_oauth_url()}",
+        )
 
 
 def _handle_unfollow_event(event: UnfollowEvent) -> None:
