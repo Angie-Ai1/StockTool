@@ -1,6 +1,6 @@
 """一次性腳本：用 service account 建立記帳試算表範本並設定正確欄位結構。
 
-不需要任何 OAuth 流程，直接用 secrets/firestore-service-account.json 執行。
+不需要任何 OAuth 流程，直接用 .personal/secrets/firestore-service-account.json 執行。
 在專案根目錄執行：poetry run python scripts/create_template_sheet.py
 """
 
@@ -14,7 +14,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
-SERVICE_ACCOUNT_FILE = Path(__file__).parent.parent / "secrets" / "firestore-service-account.json"
+SERVICE_ACCOUNT_FILE = Path(__file__).parent.parent / ".personal" / "secrets" / "firestore-service-account.json"
 
 HEADER_ROW = ["row_uuid", "日期", "動作", "股票代碼/名稱", "數量", "金額", "狀態"]
 DEFAULT_TAB_NAME = "個人帳戶"

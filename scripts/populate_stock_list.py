@@ -9,7 +9,7 @@
 
 需要：
   - .env 含有效的 GOOGLE_APPLICATION_CREDENTIALS、FIRESTORE_PROJECT_ID
-  - secrets/firestore-service-account.json 存在
+  - .personal/secrets/firestore-service-account.json 存在
 """
 
 import sys
@@ -29,7 +29,7 @@ from app.models.schemas import StockQuote
 from app.routers.tick import _save_stock_list_to_firestore
 from app.services.market_data_client import fetch_stock_list
 
-SERVICE_ACCOUNT_FILE = Path(__file__).parent.parent / "secrets" / "firestore-service-account.json"
+SERVICE_ACCOUNT_FILE = Path(__file__).parent.parent / ".personal" / "secrets" / "firestore-service-account.json"
 
 
 def get_local_firestore_client() -> firestore.Client:
