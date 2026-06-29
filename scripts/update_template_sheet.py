@@ -377,6 +377,12 @@ def main() -> None:
     print("  ☐ Z1 顯示 TEMPLATE_VERSION=1")
     print("  ☐ 「使用說明」分頁已建立，內容/排版正確，舊版「操作面板」已移除")
     print("  ☐ 試算表共用設定仍為「任何知道連結的人可以檢視」")
+    print("\n【手動步驟】按鈕需手動加在「使用說明」分頁（Sheets API 無法自動建立繪圖按鈕）：")
+    print("  ※ 刪除舊「操作面板」時，原本畫在該頁的按鈕也會一併消失，需重新繪製")
+    print("  ※ 背後的 Apps Script 函式 syncNow / addAccountTab 仍保留在試算表指令碼專案中")
+    print("  1. 切到「使用說明」分頁 →「插入 → 繪圖」，畫圓角矩形並輸入「立即同步」→ 儲存並關閉")
+    print("  2. 點該圖形右上角 ⋮ → 指定指令碼 → 輸入 syncNow → 確認")
+    print("  3. 重複步驟 1-2，文字改「新增帳戶分頁」，指令碼改 addAccountTab")
 
 
 if __name__ == "__main__":
