@@ -7,7 +7,7 @@ from app.models.schemas import FriendRecord, Position, StockQuote, TransactionAc
 from app.services import sheets_client
 from app.services.oauth_service import OAuthInvalidGrantError
 
-HEADER_ROW = ["row_uuid", "日期", "動作", "股票代碼/名稱", "數量", "金額", "狀態"]
+HEADER_ROW = ["row_uuid", "日期", "動作", "股票代碼/名稱", "數量", "金額", "狀態", "", "📊 統計摘要"]
 HEADER_INDEX = {name: i for i, name in enumerate(HEADER_ROW)}
 
 STOCK_LIST = [
@@ -184,8 +184,8 @@ def _fake_service_with_tabs():
     fake_service = MagicMock()
     fake_service.spreadsheets.return_value.get.return_value.execute.return_value = {
         "sheets": [
-            {"properties": {"title": "個人帳"}},
-            {"properties": {"title": "操作面板"}},
+            {"properties": {"title": "個人帳", "sheetId": 0}},
+            {"properties": {"title": "操作面板", "sheetId": 1}},
         ]
     }
 

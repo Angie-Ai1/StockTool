@@ -47,6 +47,8 @@ STATUS_OK = ""
 STATUS_INVALID_ROW = "⚠️ 無法辨識,請修正"
 STATUS_OVERSOLD = "⚠️ 賣出超過庫存,請修正"
 
+MAX_SUMMARY_STOCKS = 30
+
 
 def copy_template_to_drive(
     credentials: Credentials, template_id: str, file_name: str = DEFAULT_SPREADSHEET_NAME
@@ -187,6 +189,145 @@ def _write_status_column(
     ).execute()
 
 
+def _apply_tab_format(service, spreadsheet_id: str, sheet_id: int, tab_title: str) -> None:
+    """統計摘要公式、條件格式、表格線——新分頁建立或首次 resync 時呼叫一次。"""
+    data_end_row = 2 + MAX_SUMMARY_STOCKS  # Sheets row 32（最後個股列）
+    total_row = data_end_row + 1           # Sheets row 33（合計列）
+
+    summary: list[list[str]] = [
+        ["📊 統計摘要", "", "", "", ""],
+        ["個股", "持股數", "買入金額", "賣出金額", "配息收入"],
+    ]
+    for n in range(1, MAX_SUMMARY_STOCKS + 1):
+        sr = 2 + n
+        ir = f"I{sr}"
+        summary.append([
+            f'=IFERROR(INDEX(SORT(UNIQUE(FILTER($D$2:$D$2000,($C$2:$C$2000<>"")*($D$2:$D$2000<>"")))),{n},1),"")',
+            (
+                f'=IF({ir}="","",SUMIFS($E$2:$E$2000,$C$2:$C$2000,"買進",$D$2:$D$2000,{ir})'
+                f'-SUMIFS($E$2:$E$2000,$C$2:$C$2000,"賣出",$D$2:$D$2000,{ir})'
+                f'+SUMIFS($E$2:$E$2000,$C$2:$C$2000,"配股",$D$2:$D$2000,{ir}))'
+            ),
+            f'=IF({ir}="","",SUMIFS($F$2:$F$2000,$C$2:$C$2000,"買進",$D$2:$D$2000,{ir}))',
+            f'=IF({ir}="","",SUMIFS($F$2:$F$2000,$C$2:$C$2000,"賣出",$D$2:$D$2000,{ir}))',
+            f'=IF({ir}="","",SUMIFS($F$2:$F$2000,$C$2:$C$2000,"配息",$D$2:$D$2000,{ir}))',
+        ])
+    summary.append([
+        "合計", "",
+        f"=SUM(K3:K{data_end_row})",
+        f"=SUM(L3:L{data_end_row})",
+        f"=SUM(M3:M{data_end_row})",
+    ])
+
+    service.spreadsheets().values().update(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{tab_title}'!I1",
+        valueInputOption="USER_ENTERED",
+        body={"values": summary},
+    ).execute()
+
+    def _hex(h: str) -> dict:
+        h = h.lstrip("#")
+        return {"red": int(h[0:2], 16) / 255, "green": int(h[2:4], 16) / 255, "blue": int(h[4:6], 16) / 255}
+
+    def _cells(r0: int, r1: int, c0: int, c1: int) -> dict:
+        return {"sheetId": sheet_id, "startRowIndex": r0, "endRowIndex": r1, "startColumnIndex": c0, "endColumnIndex": c1}
+
+    def _border(color: str = "BDBDBD") -> dict:
+        return {"style": "SOLID", "width": 1, "color": _hex(color)}
+
+    def _col(s: int, e: int) -> dict:
+        return {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": s, "endIndex": e}
+
+    SCOL = 8   # Column I
+    SEND = 13  # Column N exclusive（I~M）
+    TIDX = total_row - 1  # 0-indexed row index for 合計（row 33 → 32）
+
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={"requests": [
+            # 流水帳表格線 B1:G1000
+            {"updateBorders": {
+                "range": _cells(0, 1000, 1, 7),
+                "top": _border(), "bottom": _border(),
+                "left": _border(), "right": _border(),
+                "innerHorizontal": _border(), "innerVertical": _border(),
+            }},
+            # 統計摘要標題列 I1:M1 合併 + 樣式
+            {"mergeCells": {"range": _cells(0, 1, SCOL, SEND), "mergeType": "MERGE_ALL"}},
+            {"repeatCell": {
+                "range": _cells(0, 1, SCOL, SEND),
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": _hex("EFEFEF"),
+                    "textFormat": {"bold": True},
+                    "horizontalAlignment": "CENTER",
+                }},
+                "fields": "userEnteredFormat(backgroundColor,textFormat.bold,horizontalAlignment)",
+            }},
+            # 欄位標題列 I2:M2
+            {"repeatCell": {
+                "range": _cells(1, 2, SCOL, SEND),
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": _hex("F5F5F5"),
+                    "textFormat": {"bold": True},
+                }},
+                "fields": "userEnteredFormat(backgroundColor,textFormat.bold)",
+            }},
+            # 合計列加粗
+            {"repeatCell": {
+                "range": _cells(TIDX, TIDX + 1, SCOL, SEND),
+                "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+                "fields": "userEnteredFormat.textFormat.bold",
+            }},
+            # 數字格式：金額欄 K-M（資料列 + 合計列）
+            {"repeatCell": {
+                "range": _cells(2, TIDX + 1, 10, 13),
+                "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "#,##0"}}},
+                "fields": "userEnteredFormat.numberFormat",
+            }},
+            # 數字格式：持股欄 J（資料列，不含合計）
+            {"repeatCell": {
+                "range": _cells(2, TIDX, 9, 10),
+                "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "#,##0.##"}}},
+                "fields": "userEnteredFormat.numberFormat",
+            }},
+            # 統計摘要框線 I1:M33
+            {"updateBorders": {
+                "range": _cells(0, TIDX + 1, SCOL, SEND),
+                "top": _border(), "bottom": _border(),
+                "left": _border(), "right": _border(),
+                "innerHorizontal": _border("E0E0E0"), "innerVertical": _border("E0E0E0"),
+            }},
+            # 欄寬：H 空欄 / I 個股 / J-M 數字欄
+            {"updateDimensionProperties": {"range": _col(7, 8), "properties": {"pixelSize": 20}, "fields": "pixelSize"}},
+            {"updateDimensionProperties": {"range": _col(8, 9), "properties": {"pixelSize": 130}, "fields": "pixelSize"}},
+            {"updateDimensionProperties": {"range": _col(9, 13), "properties": {"pixelSize": 90}, "fields": "pixelSize"}},
+            # 條件格式：買進列 → 淡綠
+            {"addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [_cells(1, 1000, 1, 7)],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": '=$C2="買進"'}]},
+                        "format": {"backgroundColor": _hex("D9EFD9")},
+                    },
+                },
+                "index": 0,
+            }},
+            # 條件格式：賣出列 → 淡紅
+            {"addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [_cells(1, 1000, 1, 7)],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": '=$C2="賣出"'}]},
+                        "format": {"backgroundColor": _hex("FDDCDC")},
+                    },
+                },
+                "index": 1,
+            }},
+        ]},
+    ).execute()
+
+
 def resync(
     friend: FriendRecord,
     stock_list: list[StockQuote],
@@ -225,6 +366,7 @@ def resync(
 
     for sheet in spreadsheet.get("sheets", []):
         title = sheet["properties"]["title"]
+        sheet_id = sheet["properties"]["sheetId"]
         values_response = (
             service.spreadsheets()
             .values()
@@ -238,6 +380,11 @@ def resync(
         header_index = map_header_columns(rows[0])
         if header_index is None:
             continue  # 標題列結構不符,不是帳戶分頁——規格 1.6
+
+        # 首次 resync 時（或舊分頁升級時）套用統計摘要與視覺格式
+        has_summary = len(rows[0]) > 8 and rows[0][8] == "📊 統計摘要"
+        if not has_summary:
+            _apply_tab_format(service, friend.spreadsheet_id, sheet_id, title)
 
         positions, statuses = resync_account_tab(rows[1:], header_index, stock_list)
         _write_status_column(service, friend.spreadsheet_id, title, header_index, statuses)
@@ -565,6 +712,8 @@ def create_account_tab(
         spreadsheetId=friend.spreadsheet_id,
         body={"requests": format_requests},
     ).execute()
+
+    _apply_tab_format(service, friend.spreadsheet_id, sheet_id, tab_name)
 
     # Firestore cache：把新分頁名稱加入已辨識的帳戶清單
     existing = list(friend.account_tabs_cache or [])
