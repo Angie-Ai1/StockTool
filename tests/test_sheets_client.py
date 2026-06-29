@@ -167,7 +167,7 @@ def test_write_status_column_writes_status_range():
     )
     fake_service.spreadsheets.return_value.values.return_value.update.assert_called_once_with(
         spreadsheetId="sheet-1",
-        range="'個人帳'!G2:G3",
+        range="'個人帳'!G4:G5",
         valueInputOption="RAW",
         body={"values": [[""], [sheets_client.STATUS_OVERSOLD]]},
     )
@@ -380,10 +380,18 @@ def _fake_txn():
 
 
 def test_append_transaction_row_appends_correct_row():
+    # 新版面：標頭在 row3（前兩列留白），資料從 row4 起
     fake_service = MagicMock()
-    fake_service.spreadsheets.return_value.values.return_value.get.return_value.execute.return_value = {
-        "values": [HEADER_ROW]
-    }
+
+    def fake_get(spreadsheetId, range):
+        mock = MagicMock()
+        if range == "'個人帳'!1:3":  # 讀前三列定位標頭
+            mock.execute.return_value = {"values": [[], [], HEADER_ROW]}
+        else:  # A4:A（資料第一列起的 row_uuid 欄）
+            mock.execute.return_value = {"values": []}
+        return mock
+
+    fake_service.spreadsheets.return_value.values.return_value.get.side_effect = fake_get
 
     sheets_client.append_transaction_row(
         _fake_friend(),
@@ -397,7 +405,7 @@ def test_append_transaction_row_appends_correct_row():
     update_call = fake_service.spreadsheets.return_value.values.return_value.update
     update_call.assert_called_once()
     call_kwargs = update_call.call_args.kwargs
-    assert call_kwargs["range"] == "'個人帳'!A2"
+    assert call_kwargs["range"] == "'個人帳'!A4"
     body = call_kwargs["body"]
     row = body["values"][0]
     assert row[0] == "test-uuid-1"   # row_uuid

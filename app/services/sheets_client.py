@@ -56,7 +56,12 @@ SUMMARY_TITLE_ROW = 2
 SUMMARY_HEADER_ROW = 3
 SUMMARY_FIRST_STOCK_ROW = 4
 SUMMARY_LAST_STOCK_ROW = SUMMARY_FIRST_STOCK_ROW + MAX_SUMMARY_STOCKS - 1  # 33
-SUMMARY_FROZEN_ROWS = 3  # 凍結 row1 合計 + row2-3 標頭（流水帳前兩列也會一併凍結，為共用版面限制）
+SUMMARY_FROZEN_ROWS = 3  # 凍結 row1 合計 + row2-3 標頭，捲動個股時保持可見
+
+# 流水帳版面：標頭對齊統計摘要欄位標頭放在 row3，資料從 row4 起（row1-2 留白）。
+# 這樣凍結前三列時，凍住的只有「標頭」，使用者輸入的交易筆數（row4 起）不會被凍結。
+LEDGER_HEADER_ROW = 3
+LEDGER_DATA_FIRST_ROW = 4
 
 
 def copy_template_to_drive(
@@ -74,6 +79,20 @@ def map_header_columns(header_row: list[str]) -> dict[str, int] | None:
     if not all(header in index for header in REQUIRED_HEADERS):
         return None
     return index
+
+
+def find_ledger_header_row(rows: list[list[str]]) -> int | None:
+    """在整頁 values 裡定位流水帳標頭的 0-indexed 列號，找不到回 None。
+
+    優先找新版面位置（標頭 row3 → index 2），再退回舊版面（標頭 row1 → index 0），
+    讓記帳/查詢/撤銷在「舊分頁尚未被 resync 升級」的過渡期仍能正確運作。
+    """
+    new_idx = LEDGER_HEADER_ROW - 1  # row3 → 2
+    if new_idx < len(rows) and map_header_columns(rows[new_idx]) is not None:
+        return new_idx
+    if rows and map_header_columns(rows[0]) is not None:
+        return 0
+    return None
 
 
 def _cell(row: list[str], header_index: dict[str, int], header: str) -> str:
@@ -192,7 +211,8 @@ def _write_status_column(
     if not statuses:
         return
     column = _column_letter(header_index["狀態"])
-    value_range = f"'{tab_title}'!{column}2:{column}{len(statuses) + 1}"
+    first = LEDGER_DATA_FIRST_ROW
+    value_range = f"'{tab_title}'!{column}{first}:{column}{first + len(statuses) - 1}"
     service.spreadsheets().values().update(
         spreadsheetId=spreadsheet_id,
         range=value_range,
@@ -214,6 +234,13 @@ def _write_summary_formulas(service, spreadsheet_id: str, tab_title: str) -> Non
     last = SUMMARY_LAST_STOCK_ROW         # 個股最後一列（row 33）
     price_end_row = 1 + MAX_SUMMARY_STOCKS  # 報價參考區 S2:T31 的最後一列
 
+    # 流水帳資料範圍（標頭在 row3，資料從 row4 起）——統計公式以此為加總來源
+    dr = LEDGER_DATA_FIRST_ROW
+    rng_c = f"$C${dr}:$C$2000"  # 動作
+    rng_d = f"$D${dr}:$D$2000"  # 股票代碼/名稱
+    rng_e = f"$E${dr}:$E$2000"  # 數量
+    rng_f = f"$F${dr}:$F$2000"  # 金額
+
     # row1：合計（彙總 row4~row33 的個股）
     summary: list[list[str]] = [
         [
@@ -234,18 +261,18 @@ def _write_summary_formulas(service, spreadsheet_id: str, tab_title: str) -> Non
     for n in range(1, MAX_SUMMARY_STOCKS + 1):
         sr = SUMMARY_HEADER_ROW + n  # 個股列：row 4..33
         ir = f"I{sr}"
-        buy_qty = f'SUMIFS($E$2:$E$2000,$C$2:$C$2000,"買進",$D$2:$D$2000,{ir})'
-        sell_qty = f'SUMIFS($E$2:$E$2000,$C$2:$C$2000,"賣出",$D$2:$D$2000,{ir})'
+        buy_qty = f'SUMIFS({rng_e},{rng_c},"買進",{rng_d},{ir})'
+        sell_qty = f'SUMIFS({rng_e},{rng_c},"賣出",{rng_d},{ir})'
         summary.append([
-            f'=IFERROR(INDEX(SORT(UNIQUE(FILTER($D$2:$D$2000,($C$2:$C$2000<>"")*($D$2:$D$2000<>"")))),{n},1),"")',
+            f'=IFERROR(INDEX(SORT(UNIQUE(FILTER({rng_d},({rng_c}<>"")*({rng_d}<>"")))),{n},1),"")',
             (
-                f'=IF({ir}="","",SUMIFS($E$2:$E$2000,$C$2:$C$2000,"買進",$D$2:$D$2000,{ir})'
-                f'-SUMIFS($E$2:$E$2000,$C$2:$C$2000,"賣出",$D$2:$D$2000,{ir})'
-                f'+SUMIFS($E$2:$E$2000,$C$2:$C$2000,"配股",$D$2:$D$2000,{ir}))'
+                f'=IF({ir}="","",SUMIFS({rng_e},{rng_c},"買進",{rng_d},{ir})'
+                f'-SUMIFS({rng_e},{rng_c},"賣出",{rng_d},{ir})'
+                f'+SUMIFS({rng_e},{rng_c},"配股",{rng_d},{ir}))'
             ),
-            f'=IF({ir}="","",SUMIFS($F$2:$F$2000,$C$2:$C$2000,"買進",$D$2:$D$2000,{ir}))',
-            f'=IF({ir}="","",SUMIFS($F$2:$F$2000,$C$2:$C$2000,"賣出",$D$2:$D$2000,{ir}))',
-            f'=IF({ir}="","",SUMIFS($F$2:$F$2000,$C$2:$C$2000,"配息",$D$2:$D$2000,{ir}))',
+            f'=IF({ir}="","",SUMIFS({rng_f},{rng_c},"買進",{rng_d},{ir}))',
+            f'=IF({ir}="","",SUMIFS({rng_f},{rng_c},"賣出",{rng_d},{ir}))',
+            f'=IF({ir}="","",SUMIFS({rng_f},{rng_c},"配息",{rng_d},{ir}))',
             # 今日收盤價 N：查後端寫入的報價參考區（找不到留空）
             f'=IF({ir}="","",IFERROR(VLOOKUP({ir},$S$2:$T${price_end_row},2,FALSE),""))',
             # 買進平均價 O = 買入金額 / 買進股數
@@ -427,12 +454,16 @@ def _apply_tab_format(service, spreadsheet_id: str, sheet_id: int, tab_title: st
     def _col(s: int, e: int) -> dict:
         return {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": s, "endIndex": e}
 
+    hdr_i = LEDGER_HEADER_ROW - 1       # 流水帳標頭 0-indexed（row3 → 2）
+    data_i = LEDGER_DATA_FIRST_ROW - 1  # 流水帳資料 0-indexed（row4 → 3）
+    dr = LEDGER_DATA_FIRST_ROW          # 條件式公式錨點列（row4）
+
     service.spreadsheets().batchUpdate(
         spreadsheetId=spreadsheet_id,
         body={"requests": [
-            # 流水帳表格線 B1:G1000
+            # 流水帳表格線 B(標頭列):G1000
             {"updateBorders": {
-                "range": _cells(0, 1000, 1, 7),
+                "range": _cells(hdr_i, 1000, 1, 7),
                 "top": _border(), "bottom": _border(),
                 "left": _border(), "right": _border(),
                 "innerHorizontal": _border(), "innerVertical": _border(),
@@ -442,9 +473,9 @@ def _apply_tab_format(service, spreadsheet_id: str, sheet_id: int, tab_title: st
             # 條件格式：買進列 → 淡綠
             {"addConditionalFormatRule": {
                 "rule": {
-                    "ranges": [_cells(1, 1000, 1, 7)],
+                    "ranges": [_cells(data_i, 1000, 1, 7)],
                     "booleanRule": {
-                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": '=$C2="買進"'}]},
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f'=$C{dr}="買進"'}]},
                         "format": {"backgroundColor": _hex("D9EFD9")},
                     },
                 },
@@ -453,15 +484,41 @@ def _apply_tab_format(service, spreadsheet_id: str, sheet_id: int, tab_title: st
             # 條件格式：賣出列 → 淡紅
             {"addConditionalFormatRule": {
                 "rule": {
-                    "ranges": [_cells(1, 1000, 1, 7)],
+                    "ranges": [_cells(data_i, 1000, 1, 7)],
                     "booleanRule": {
-                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": '=$C2="賣出"'}]},
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f'=$C{dr}="賣出"'}]},
                         "format": {"backgroundColor": _hex("FDDCDC")},
                     },
                 },
                 "index": 1,
             }},
         ]},
+    ).execute()
+
+
+def _migrate_ledger_to_new_layout(service, spreadsheet_id: str, sheet_id: int, tab_title: str) -> None:
+    """把舊版面（流水帳標頭在 row1）的分頁就地升級到新版面（標頭 row3、資料 row4）。
+
+    做法：頂端插入兩列，使既有流水帳整體下移兩列（資料完整保留）；插入後舊統計摘要/
+    報價區（cols I:T）被往下推，先清空，由呼叫端隨後重建。冪等：只在偵測到舊版面時呼叫。
+    """
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={"requests": [
+            {"insertDimension": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "ROWS",
+                    "startIndex": 0,
+                    "endIndex": LEDGER_HEADER_ROW - 1,  # 插入兩列
+                },
+                "inheritFromBefore": False,
+            }},
+        ]},
+    ).execute()
+    service.spreadsheets().values().clear(
+        spreadsheetId=spreadsheet_id,
+        range=f"'{tab_title}'!I1:T1000",
     ).execute()
 
 
@@ -514,14 +571,21 @@ def resync(
         if not rows:
             continue
 
-        header_index = map_header_columns(rows[0])
-        if header_index is None:
+        header_row_idx = find_ledger_header_row(rows)
+        if header_row_idx is None:
             continue  # 標題列結構不符,不是帳戶分頁——規格 1.6
 
-        # 首次 resync 時（含舊分頁升級）套用流水帳一次性視覺格式（內含公式寫入）；
-        # 已有摘要的分頁只重寫公式區，修正任何因舊版 INSERT_ROWS 造成的偏移。
-        # 偵測 I 欄前三列是否出現摘要標記：相容舊版（標題在 row1）與新版（合計在
-        # row1、標題在 row2），只要看得到任一標記就視為已建過摘要，不再跑一次性格式。
+        # 舊版面（標頭在 row1）就地升級到新版面（標頭 row3、資料 row4）：頂端插入兩列。
+        # 升級後標頭固定在 row3，資料下移到 row4；in-memory 的 rows 內容不變（順序一致），
+        # 後續統計/狀態寫入用新版列號常數，與升級後的實體位置對齊。
+        if header_row_idx == 0:
+            _migrate_ledger_to_new_layout(service, friend.spreadsheet_id, sheet_id, title)
+
+        header_index = map_header_columns(rows[header_row_idx])
+        data_rows = rows[header_row_idx + 1:]
+
+        # 偵測 I 欄前三列是否出現摘要標記（相容新舊版面），有標記代表已建過摘要，
+        # 不再跑會疊加條件式格式的一次性 `_apply_tab_format`。
         col_i_top = [r[8] if len(r) > 8 else "" for r in rows[:3]]
         has_summary = "📊 統計摘要" in col_i_top or "合計" in col_i_top
         if not has_summary:
@@ -529,12 +593,12 @@ def resync(
 
         # 順序很重要：先套統計摘要格式（內含解除舊標題合併），再寫公式。
         # 否則殘留的標題合併會吞掉 row1 合計列的 SUM 公式（只剩左上角「合計」）。
-        # 報價參考區每次都刷新，讓今日收盤價更新；舊版 I:M 分頁也在此自動升級。
+        # 報價參考區每次都刷新，讓今日收盤價更新；舊版分頁也在此自動升級。
         _format_summary_columns(service, friend.spreadsheet_id, sheet_id)
         _write_summary_formulas(service, friend.spreadsheet_id, title)
-        _write_price_reference(service, friend.spreadsheet_id, title, rows[1:], header_index, stock_list)
+        _write_price_reference(service, friend.spreadsheet_id, title, data_rows, header_index, stock_list)
 
-        positions, statuses = resync_account_tab(rows[1:], header_index, stock_list)
+        positions, statuses = resync_account_tab(data_rows, header_index, stock_list)
         _write_status_column(service, friend.spreadsheet_id, title, header_index, statuses)
 
         registered_tabs.append(title)
@@ -581,10 +645,11 @@ def read_tab_positions(
     rows = response.get("values", [])
     if not rows:
         return {}
-    header_index = map_header_columns(rows[0])
-    if header_index is None:
+    header_row_idx = find_ledger_header_row(rows)
+    if header_row_idx is None:
         return {}
-    positions, _ = resync_account_tab(rows[1:], header_index, stock_list)
+    header_index = map_header_columns(rows[header_row_idx])
+    positions, _ = resync_account_tab(rows[header_row_idx + 1:], header_index, stock_list)
     return positions
 
 
@@ -610,10 +675,11 @@ def append_transaction_row(
 
     service = sheets_service_builder(credentials)
     try:
+        # 讀前三列定位標頭（相容舊版 row1 / 新版 row3）
         header_response = (
             service.spreadsheets()
             .values()
-            .get(spreadsheetId=friend.spreadsheet_id, range=f"'{tab_name}'!1:1")
+            .get(spreadsheetId=friend.spreadsheet_id, range=f"'{tab_name}'!1:{LEDGER_HEADER_ROW}")
             .execute()
         )
     except HttpError as exc:
@@ -622,13 +688,13 @@ def append_transaction_row(
         raise
 
     header_rows = header_response.get("values", [])
-    if not header_rows:
-        raise ValueError(f"找不到帳戶分頁「{tab_name}」")
-    header_index = map_header_columns(header_rows[0])
-    if header_index is None:
+    header_row_idx = find_ledger_header_row(header_rows)
+    if header_row_idx is None:
         raise ValueError(f"「{tab_name}」標題列結構不符規格")
+    header_index = map_header_columns(header_rows[header_row_idx])
+    data_first_row = header_row_idx + 2  # 1-indexed 資料第一列（舊版 row2、新版 row4）
 
-    # 只寫 A–G 欄（REQUIRED_HEADERS 範圍），I–M 的統計摘要不受影響
+    # 只寫 A–G 欄（REQUIRED_HEADERS 範圍），I 欄起的統計摘要不受影響
     num_cols = len(REQUIRED_HEADERS)
     new_row = [""] * num_cols
     field_values = {
@@ -644,16 +710,16 @@ def append_transaction_row(
         if col_name in field_values and col_idx < num_cols:
             new_row[col_idx] = field_values[col_name]
 
-    # 讀取 A 欄（row_uuid）計算下一個空列。
-    # 不用 append+OVERWRITE：OVERWRITE 的表格邊界偵測會把 I–M 欄的統計公式算進去，
-    # 導致每次都寫到同一列（永遠覆蓋第一筆）。用 update 直接指定列號最可靠。
+    # 從資料第一列起讀 A 欄計算下一個空列（range 起點即資料列，回傳已去除尾端空列，
+    # 與「標頭在第幾列」無關，最穩）。不用 append+OVERWRITE：其表格邊界偵測會把
+    # I 欄起的統計公式算進去，導致每次都寫到同一列。
     uuid_col = (
         service.spreadsheets()
         .values()
-        .get(spreadsheetId=friend.spreadsheet_id, range=f"'{tab_name}'!A:A")
+        .get(spreadsheetId=friend.spreadsheet_id, range=f"'{tab_name}'!A{data_first_row}:A")
         .execute()
     )
-    next_row = max(len(uuid_col.get("values", [])) + 1, 2)
+    next_row = data_first_row + len(uuid_col.get("values", []))
 
     service.spreadsheets().values().update(
         spreadsheetId=friend.spreadsheet_id,
@@ -727,9 +793,10 @@ def delete_transaction_rows(
         if not rows:
             continue
 
-        header_index = map_header_columns(rows[0])
-        if header_index is None:
+        header_row_idx = find_ledger_header_row(rows)
+        if header_row_idx is None:
             continue
+        header_index = map_header_columns(rows[header_row_idx])
 
         uuid_col = header_index.get("row_uuid")
         if uuid_col is None:
@@ -738,8 +805,8 @@ def delete_transaction_rows(
         uuid_set = set(uuids)
         row_indices: list[int] = []
         for i, row in enumerate(rows):
-            if i == 0:
-                continue
+            if i <= header_row_idx:
+                continue  # 跳過標頭與其上方留白列
             cell = row[uuid_col] if uuid_col < len(row) else ""
             if str(cell).strip() in uuid_set:
                 row_indices.append(i)
@@ -799,10 +866,10 @@ def create_account_tab(
     ).execute()
     sheet_id = response["replies"][0]["addSheet"]["properties"]["sheetId"]
 
-    # 寫入標題列
+    # 寫入標題列（新版面：標頭在 row3，row1-2 留白）
     service.spreadsheets().values().update(
         spreadsheetId=friend.spreadsheet_id,
-        range=f"'{tab_name}'!A1:G1",
+        range=f"'{tab_name}'!A{LEDGER_HEADER_ROW}:G{LEDGER_HEADER_ROW}",
         valueInputOption="RAW",
         body={"values": [list(REQUIRED_HEADERS)]},
     ).execute()
@@ -818,13 +885,16 @@ def create_account_tab(
     def _cells(r0: int, r1: int, c0: int, c1: int) -> dict:
         return {"sheetId": sheet_id, "startRowIndex": r0, "endRowIndex": r1, "startColumnIndex": c0, "endColumnIndex": c1}
 
+    hdr_i = LEDGER_HEADER_ROW - 1       # 標頭 0-indexed（row3 → 2）
+    data_i = LEDGER_DATA_FIRST_ROW - 1  # 資料 0-indexed（row4 → 3）
+
     format_requests: list[dict] = [
         {"updateSheetProperties": {
             "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": SUMMARY_FROZEN_ROWS}},
             "fields": "gridProperties.frozenRowCount",
         }},
         {"repeatCell": {
-            "range": _cells(0, 1, 0, 7),
+            "range": _cells(hdr_i, hdr_i + 1, 0, 7),
             "cell": {"userEnteredFormat": {
                 "backgroundColor": _hex("EFEFEF"),
                 "textFormat": {"bold": True},
@@ -832,12 +902,12 @@ def create_account_tab(
             "fields": "userEnteredFormat(backgroundColor,textFormat.bold)",
         }},
         {"repeatCell": {
-            "range": _cells(1, 1000, 1, 2),
+            "range": _cells(data_i, 1000, 1, 2),
             "cell": {"userEnteredFormat": {"numberFormat": {"type": "DATE", "pattern": "yyyy/mm/dd"}}},
             "fields": "userEnteredFormat.numberFormat",
         }},
         {"setDataValidation": {
-            "range": _cells(1, 1000, 2, 3),
+            "range": _cells(data_i, 1000, 2, 3),
             "rule": {
                 "condition": {"type": "ONE_OF_LIST", "values": [
                     {"userEnteredValue": "買進"},
@@ -850,7 +920,7 @@ def create_account_tab(
             },
         }},
         {"repeatCell": {
-            "range": _cells(1, 1000, 6, 7),
+            "range": _cells(data_i, 1000, 6, 7),
             "cell": {"userEnteredFormat": {"backgroundColor": _hex("F5F5F5")}},
             "fields": "userEnteredFormat.backgroundColor",
         }},
