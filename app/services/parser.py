@@ -80,19 +80,30 @@ def _parse_line(line: str, closing_price_lookup: ClosingPriceLookup | None) -> P
         elif len(rest) == 2:
             stock_query, amount_token = rest
             amount = _parse_amount(amount_token)
-            if closing_price_lookup is None:
-                raise ValueError(
-                    "只輸入金額,需要收盤價才能估算股數,目前無法取得收盤價,"
-                    "請改用「個股 數量 金額」格式重新輸入"
-                )
-            price = closing_price_lookup(stock_query)
-            if price is None or price <= 0:
-                raise ValueError(f"查不到「{stock_query}」的收盤價,請改用「個股 數量 金額」格式重新輸入")
-            quantity = (amount / price).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if action is TransactionAction.SELL:
+                # 賣出只給金額 = 賣掉「目前全部持股」、實收金額為此數，賺賠由記帳時依
+                # 庫存均價結算（不可用收盤價回推股數，否則賣超且損益錯誤）。股數留 None，
+                # 於 _book_transactions 依當下庫存填上。
+                quantity = None
+            else:
+                # 買進只給金額：依收盤價估算買到的股數
+                if closing_price_lookup is None:
+                    raise ValueError(
+                        "只輸入金額,需要收盤價才能估算股數,目前無法取得收盤價,"
+                        "請改用「個股 數量 金額」格式重新輸入"
+                    )
+                price = closing_price_lookup(stock_query)
+                if price is None or price <= 0:
+                    raise ValueError(f"查不到「{stock_query}」的收盤價,請改用「個股 數量 金額」格式重新輸入")
+                quantity = (amount / price).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         else:
             raise ValueError("格式不符,買/賣需要「個股 數量 金額」或「個股 金額」")
 
-        unit_price = (amount / quantity).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        unit_price = (
+            (amount / quantity).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if quantity is not None
+            else None
+        )
         return ParsedTransaction(
             raw_text=line,
             action=action,

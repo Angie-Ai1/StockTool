@@ -52,6 +52,17 @@ def test_sell_uses_same_field_order_as_buy():
     assert txn.action is TransactionAction.SELL
 
 
+def test_sell_amount_only_leaves_quantity_none_for_sell_all():
+    # 賣出只給金額 = 賣掉全部持股，股數留 None（不可用收盤價回推，否則會賣超）；
+    # 不需要 closing_price_lookup 也能解析成功
+    result = parse_transaction_text("賣 3006 12000")
+    assert result.errors == []
+    txn = result.transactions[0]
+    assert txn.action is TransactionAction.SELL
+    assert txn.quantity is None
+    assert txn.amount == Decimal("12000")
+
+
 def test_cash_dividend_format():
     result = parse_transaction_text("配息 華邦電 500元")
     txn = result.transactions[0]

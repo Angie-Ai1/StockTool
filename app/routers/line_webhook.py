@@ -41,7 +41,15 @@ from linebot.v3.webhooks import (
 )
 
 from app.config import get_settings
-from app.models.schemas import FriendRecord, FriendStatus, Position, ResyncResult, StockQuote, TransactionRow
+from app.models.schemas import (
+    FriendRecord,
+    FriendStatus,
+    Position,
+    ResyncResult,
+    StockQuote,
+    TransactionAction,
+    TransactionRow,
+)
 from app.routers.tick import get_cached_stock_list
 from app.services.friend_repository import deactivate_friend, get_friend_record, reactivate_friend
 from app.services.fuzzy_match import resolve_stock
@@ -49,7 +57,7 @@ from app.services.oauth_service import OAuthInvalidGrantError
 from app.services.parser import parse_transaction_text
 from app.services.pnl_engine import InsufficientPositionError, apply_transaction, compute_unrealized_pnl
 from app.services.sheets_client import (
-    append_transaction_row,
+    append_transaction_rows,
     create_account_tab,
     delete_transaction_rows,
     read_tab_positions,
@@ -192,10 +200,20 @@ def _book_transactions(
 
     positions: dict[str, Position] = read_tab_positions(friend, tab_name, stock_list)
 
+    rows_to_write: list[TransactionRow] = []
     for txn, stock in resolved:
         position = positions.get(stock.code, Position(stock_code=stock.code))
+
+        # 賣出只給金額（股數 None）= 賣掉目前全部持股，股數於此依當下庫存決定
+        effective_txn = txn
+        if txn.action is TransactionAction.SELL and txn.quantity is None:
+            if position.quantity <= 0:
+                errors.append(f"「{stock.code} {stock.name}」目前無持股,無法賣出,這筆略過")
+                continue
+            effective_txn = txn.model_copy(update={"quantity": position.quantity})
+
         try:
-            new_position = apply_transaction(position, txn)
+            new_position = apply_transaction(position, effective_txn)
         except InsufficientPositionError:
             errors.append(f"「{stock.code} {stock.name}」庫存不足({position.quantity} 股),這筆略過")
             continue
@@ -203,21 +221,26 @@ def _book_transactions(
         row = TransactionRow(
             row_uuid=str(uuid.uuid4()),
             date=Date.today(),
-            action=txn.action,
+            action=effective_txn.action,
             stock_query=f"{stock.code} {stock.name}",
-            quantity=txn.quantity,
-            amount=txn.amount,
+            quantity=effective_txn.quantity,
+            amount=effective_txn.amount,
         )
-        append_transaction_row(friend, tab_name, row)
+        rows_to_write.append(row)
         positions[stock.code] = new_position
         written_uuids.append(row.row_uuid)
 
-        label_parts = [txn.action.value, f"{stock.code} {stock.name}"]
-        if txn.quantity is not None:
-            label_parts.append(f"{txn.quantity} 股")
-        if txn.amount is not None:
-            label_parts.append(f"${txn.amount}")
+        label_parts = [effective_txn.action.value, f"{stock.code} {stock.name}"]
+        if effective_txn.quantity is not None:
+            label_parts.append(f"{effective_txn.quantity} 股")
+        if effective_txn.amount is not None:
+            label_parts.append(f"${effective_txn.amount}")
         successes.append(" ".join(label_parts))
+
+    # 多筆一次寫入：一次算好起始列再整批寫，避免逐筆「讀列號→寫入」因 Sheets
+    # 寫入傳播延遲而算到同一列、互相覆蓋（首次冷啟動時最容易發生）。
+    if rows_to_write:
+        append_transaction_rows(friend, tab_name, rows_to_write)
 
     return successes, errors, written_uuids
 
@@ -478,7 +501,8 @@ def _build_welcome_back_text() -> str:
 def _build_usage_guide_text() -> str:
     return (
         "📊 記帳格式說明\n"
-        "【買賣】買/賣 股票(股數) 總金額\n"
+        "【買賣】買/賣 股票名稱or代碼 股數 總金額\n"
+        "【買賣】買/賣 股票名稱or代碼 總金額 (不輸入股數也可以)\n"
         "【股利】配息 股票 金額\n"
         "【配股】配股 股票 股數\n"
         "\n"

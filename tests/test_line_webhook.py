@@ -322,7 +322,7 @@ def test_text_message_booking_success_single_account(client, monkeypatch):
     monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
     monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=STOCK_LIST))
     monkeypatch.setattr(line_webhook, "read_tab_positions", MagicMock(return_value={}))
-    monkeypatch.setattr(line_webhook, "append_transaction_row", MagicMock())
+    monkeypatch.setattr(line_webhook, "append_transaction_rows", MagicMock())
     quick_reply = MagicMock()
     monkeypatch.setattr(line_webhook, "_reply_with_quick_reply", quick_reply)
 
@@ -333,8 +333,46 @@ def test_text_message_booking_success_single_account(client, monkeypatch):
     assert "✅" in text
     assert "2330" in text
     assert "❌ 刪除上一筆" in options
-    line_webhook.append_transaction_row.assert_called_once()
+    line_webhook.append_transaction_rows.assert_called_once()
     assert "Uxxx" in line_webhook._pending_undo
+
+
+def test_text_message_sell_amount_only_sells_all_holdings(client, monkeypatch):
+    # 持有 10 股、均價 600；輸入「賣 2330 7000」（只給金額）→ 賣掉全部 10 股、實收 7000
+    held = Position(stock_code="2330", quantity=Decimal("10"), avg_cost=Decimal("600"))
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
+    monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=STOCK_LIST))
+    monkeypatch.setattr(line_webhook, "read_tab_positions", MagicMock(return_value={"2330": held}))
+    append = MagicMock()
+    monkeypatch.setattr(line_webhook, "append_transaction_rows", append)
+    monkeypatch.setattr(line_webhook, "_reply_with_quick_reply", MagicMock())
+
+    event = _message_event("Uxxx")
+    event["message"]["text"] = "賣 2330 7000"
+    _post(client, [event])
+
+    append.assert_called_once()
+    written_rows = append.call_args.args[2]
+    assert len(written_rows) == 1
+    assert written_rows[0].quantity == Decimal("10")   # 賣掉全部持股
+    assert written_rows[0].amount == Decimal("7000")
+
+
+def test_text_message_sell_amount_only_without_holdings_is_skipped(client, monkeypatch):
+    monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
+    monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=STOCK_LIST))
+    monkeypatch.setattr(line_webhook, "read_tab_positions", MagicMock(return_value={}))
+    append = MagicMock()
+    monkeypatch.setattr(line_webhook, "append_transaction_rows", append)
+    reply = MagicMock()
+    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+
+    event = _message_event("Uxxx")
+    event["message"]["text"] = "賣 2330 7000"
+    _post(client, [event])
+
+    append.assert_not_called()
+    assert "無持股" in reply.call_args.args[1]
 
 
 def test_text_message_oversell_replies_error(client, monkeypatch):
@@ -344,7 +382,7 @@ def test_text_message_oversell_replies_error(client, monkeypatch):
     monkeypatch.setattr(
         line_webhook, "read_tab_positions", MagicMock(return_value={"2330": existing_position})
     )
-    monkeypatch.setattr(line_webhook, "append_transaction_row", MagicMock())
+    monkeypatch.setattr(line_webhook, "append_transaction_rows", MagicMock())
     reply = MagicMock()
     monkeypatch.setattr(line_webhook, "_reply_text", reply)
 
@@ -355,7 +393,7 @@ def test_text_message_oversell_replies_error(client, monkeypatch):
 
     reply.assert_called_once()
     assert "庫存不足" in reply.call_args.args[1]
-    line_webhook.append_transaction_row.assert_not_called()
+    line_webhook.append_transaction_rows.assert_not_called()
 
 
 def test_text_message_multi_account_no_tag_sends_quick_reply(client, monkeypatch):
@@ -386,7 +424,7 @@ def test_text_message_quick_reply_selection_executes_booking(client, monkeypatch
     monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=STOCK_LIST))
     monkeypatch.setattr(line_webhook, "read_tab_positions", MagicMock(return_value={}))
     append = MagicMock()
-    monkeypatch.setattr(line_webhook, "append_transaction_row", append)
+    monkeypatch.setattr(line_webhook, "append_transaction_rows", append)
 
     # 先觸發 Quick Reply 詢問（帳戶選擇）
     quick_reply = MagicMock()
@@ -440,7 +478,7 @@ def test_undo_after_booking_deletes_rows(client, monkeypatch):
     monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
     monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=STOCK_LIST))
     monkeypatch.setattr(line_webhook, "read_tab_positions", MagicMock(return_value={}))
-    monkeypatch.setattr(line_webhook, "append_transaction_row", MagicMock())
+    monkeypatch.setattr(line_webhook, "append_transaction_rows", MagicMock())
     monkeypatch.setattr(line_webhook, "_reply_with_quick_reply", MagicMock())
 
     # 先記帳讓 undo 狀態就位

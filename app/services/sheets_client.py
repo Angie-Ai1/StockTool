@@ -655,10 +655,28 @@ def read_tab_positions(
     return positions
 
 
-def append_transaction_row(
+def _txn_to_row_values(txn: TransactionRow, header_index: dict[str, int], num_cols: int) -> list[str]:
+    """把一筆交易轉成 A–G 欄的列值（依標題列欄位順序擺放）"""
+    new_row = [""] * num_cols
+    field_values = {
+        "row_uuid": txn.row_uuid,
+        "日期": f"=DATE({txn.date.year},{txn.date.month},{txn.date.day})",
+        "動作": txn.action.value,
+        "股票代碼/名稱": txn.stock_query,
+        "數量": str(txn.quantity) if txn.quantity is not None else "",
+        "金額": str(txn.amount) if txn.amount is not None else "",
+        "狀態": txn.status,
+    }
+    for col_name, col_idx in header_index.items():
+        if col_name in field_values and col_idx < num_cols:
+            new_row[col_idx] = field_values[col_name]
+    return new_row
+
+
+def append_transaction_rows(
     friend: FriendRecord,
     tab_name: str,
-    txn: TransactionRow,
+    txns: list[TransactionRow],
     *,
     credentials_builder=build_credentials_from_encrypted_refresh_token,
     refresher=refresh_or_raise,
@@ -667,7 +685,14 @@ def append_transaction_row(
     ),
     firestore_client=None,
 ) -> None:
-    """把一筆新交易追加到指定帳戶分頁的下一列——規格 1.2 記帳寫入流程"""
+    """把多筆新交易一次追加到指定帳戶分頁的連續列——規格 1.2 記帳寫入流程。
+
+    一次算好起始列、整批寫入單一連續範圍，避免逐筆「讀列號→寫入」因 Sheets 寫入
+    傳播延遲而把多筆算到同一列、互相覆蓋（首次冷啟動時最容易發生）。
+    """
+    if not txns:
+        return
+
     credentials = credentials_builder(friend.encrypted_refresh_token)
     try:
         refresher(credentials)
@@ -698,19 +723,7 @@ def append_transaction_row(
 
     # 只寫 A–G 欄（REQUIRED_HEADERS 範圍），I 欄起的統計摘要不受影響
     num_cols = len(REQUIRED_HEADERS)
-    new_row = [""] * num_cols
-    field_values = {
-        "row_uuid": txn.row_uuid,
-        "日期": f"=DATE({txn.date.year},{txn.date.month},{txn.date.day})",
-        "動作": txn.action.value,
-        "股票代碼/名稱": txn.stock_query,
-        "數量": str(txn.quantity) if txn.quantity is not None else "",
-        "金額": str(txn.amount) if txn.amount is not None else "",
-        "狀態": txn.status,
-    }
-    for col_name, col_idx in header_index.items():
-        if col_name in field_values and col_idx < num_cols:
-            new_row[col_idx] = field_values[col_name]
+    new_rows = [_txn_to_row_values(txn, header_index, num_cols) for txn in txns]
 
     # 從資料第一列起讀 A 欄計算下一個空列（range 起點即資料列，回傳已去除尾端空列，
     # 與「標頭在第幾列」無關，最穩）。不用 append+OVERWRITE：其表格邊界偵測會把
@@ -727,8 +740,18 @@ def append_transaction_row(
         spreadsheetId=friend.spreadsheet_id,
         range=f"'{tab_name}'!A{next_row}",
         valueInputOption="USER_ENTERED",
-        body={"values": [new_row]},
+        body={"values": new_rows},
     ).execute()
+
+
+def append_transaction_row(
+    friend: FriendRecord,
+    tab_name: str,
+    txn: TransactionRow,
+    **kwargs,
+) -> None:
+    """單筆版本（保留向後相容）：委派給 `append_transaction_rows`"""
+    append_transaction_rows(friend, tab_name, [txn], **kwargs)
 
 
 def delete_transaction_rows(
