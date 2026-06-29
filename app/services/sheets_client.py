@@ -370,8 +370,10 @@ def _format_summary_columns(service, spreadsheet_id: str, sheet_id: int) -> None
                 "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": SUMMARY_FROZEN_ROWS}},
                 "fields": "gridProperties.frozenRowCount",
             }},
-            # 標題列 I2:Q2 合併（先 unmerge row1-3 範圍以相容舊版面）+ 樣式
-            {"unmergeCells": {"range": _cells(TOTAL_I, HEADER_I + 1, SCOL, SEND)}},
+            # 標題列 I2:Q2 合併：先 unmerge 整個摘要區 I1:Q33，再只合併 I2:Q2。
+            # 範圍涵蓋全區是為了清掉「升級插入兩列時被往下推到個股列」的殘留標題合併，
+            # 否則第一檔個股那列會被合併成一欄（只剩股票名稱）。
+            {"unmergeCells": {"range": _cells(TOTAL_I, BLOCK_END, SCOL, SEND)}},
             {"mergeCells": {"range": _cells(TITLE_I, TITLE_I + 1, SCOL, SEND), "mergeType": "MERGE_ALL"}},
             {"repeatCell": {
                 "range": _cells(TITLE_I, TITLE_I + 1, SCOL, SEND),
