@@ -7,7 +7,7 @@
 核心記帳、損益引擎、OAuth 連結、查詢／刪除／同步、LIFF 儀表板皆已完成並部署於 Google Cloud Run。
 
 🔗 **線上 Demo 儀表板（內建模擬資料，可直接點開）：**
- [持股趨勢儀表板 Demo](https://angie-ai1.github.io/StockTool/docs/demo/dashboard_demo.html)
+ [持股趨勢儀表板 Demo](https://angie-ai1.github.io/StockTool/demo/dashboard_demo.html)
 
 ---
 
@@ -73,7 +73,7 @@
 ### 4. 圖表儀表板
 
 輸入「查詢」或由選單點選「查詢」，則可開啟 LIFF 儀表板，檢視持股趨勢、損益走勢與各帳戶／個股的時間序變化（手機開全螢幕，電腦自動升級為寬幅版）。
-可先看 [線上 Demo](https://angie-ai1.github.io/StockTool/docs/demo/dashboard_demo.html) 感受呈現效果。
+可先看 [線上 Demo](https://angie-ai1.github.io/StockTool/demo/dashboard_demo.html) 感受呈現效果。
 
 ---
 
