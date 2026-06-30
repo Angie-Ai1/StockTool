@@ -120,7 +120,7 @@ def test_liff_summary_builds_account_summaries_with_unrealized_pnl(client, monke
             )
         ]
     )
-    monkeypatch.setattr(liff, "resync", MagicMock(return_value=resync_result))
+    monkeypatch.setattr(liff, "read_all_account_positions", MagicMock(return_value=resync_result))
 
     response = client.get("/liff/summary", headers={"Authorization": "Bearer good-token"})
 
@@ -138,7 +138,9 @@ def test_liff_summary_falls_back_to_needs_reauth_on_oauth_invalid_grant(client, 
     monkeypatch.setattr(liff, "verify_liff_id_token", MagicMock(return_value="U123456"))
     monkeypatch.setattr(liff, "get_friend_record", MagicMock(return_value=_friend()))
     monkeypatch.setattr(liff, "get_cached_stock_list", MagicMock(return_value=[]))
-    monkeypatch.setattr(liff, "resync", MagicMock(side_effect=OAuthInvalidGrantError("boom")))
+    monkeypatch.setattr(
+        liff, "read_all_account_positions", MagicMock(side_effect=OAuthInvalidGrantError("boom"))
+    )
 
     response = client.get("/liff/summary", headers={"Authorization": "Bearer good-token"})
 
@@ -154,7 +156,9 @@ def test_liff_summary_falls_back_to_needs_reauth_on_sheets_404(client, monkeypat
     monkeypatch.setattr(liff, "verify_liff_id_token", MagicMock(return_value="U123456"))
     monkeypatch.setattr(liff, "get_friend_record", MagicMock(return_value=_friend()))
     monkeypatch.setattr(liff, "get_cached_stock_list", MagicMock(return_value=[]))
-    monkeypatch.setattr(liff, "resync", MagicMock(side_effect=HttpError(_FakeResp(), b"{}")))
+    monkeypatch.setattr(
+        liff, "read_all_account_positions", MagicMock(side_effect=HttpError(_FakeResp(), b"{}"))
+    )
 
     response = client.get("/liff/summary", headers={"Authorization": "Bearer good-token"})
 

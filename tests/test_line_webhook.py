@@ -540,7 +540,7 @@ def test_undo_delete_returns_zero_replies_not_found(client, monkeypatch):
 
 
 def test_query_replies_with_position_summary(client, monkeypatch):
-    """送「查詢」,應呼叫 resync 並回覆含持股/損益的摘要"""
+    """送「查詢」,應呼叫只讀路徑並回覆含持股/損益的摘要"""
     from app.models.schemas import AccountResyncResult, ResyncResult
 
     monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
@@ -555,7 +555,9 @@ def test_query_replies_with_position_summary(client, monkeypatch):
     mock_result = ResyncResult(
         accounts=[AccountResyncResult(tab_name="個人", positions=[position])]
     )
-    monkeypatch.setattr(line_webhook, "resync", MagicMock(return_value=mock_result))
+    monkeypatch.setattr(
+        line_webhook, "read_all_account_positions", MagicMock(return_value=mock_result)
+    )
     reply = MagicMock()
     monkeypatch.setattr(line_webhook, "_reply_text", reply)
 
@@ -576,7 +578,9 @@ def test_query_oauth_expired_replies_reauth_url(client, monkeypatch):
     monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=LINKED_FRIEND))
     monkeypatch.setattr(line_webhook, "get_cached_stock_list", MagicMock(return_value=[]))
     monkeypatch.setattr(
-        line_webhook, "resync", MagicMock(side_effect=OAuthInvalidGrantError("expired"))
+        line_webhook,
+        "read_all_account_positions",
+        MagicMock(side_effect=OAuthInvalidGrantError("expired")),
     )
     monkeypatch.setattr(
         line_webhook, "_liff_oauth_url", MagicMock(return_value="https://example.com/reauth")

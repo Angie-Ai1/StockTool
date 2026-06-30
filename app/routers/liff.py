@@ -32,7 +32,11 @@ from app.services.history_engine import reconstruct_history
 from app.services.fuzzy_match import resolve_stock
 from app.services.oauth_service import OAuthInvalidGrantError
 from app.services.pnl_engine import compute_unrealized_pnl
-from app.services.sheets_client import read_all_account_transactions, resync
+from app.services.sheets_client import (
+    read_all_account_positions,
+    read_all_account_transactions,
+    resync,
+)
 
 router = APIRouter()
 
@@ -155,7 +159,8 @@ def liff_summary(authorization: str = Header(...)) -> LiffSummaryResponse:
 
     stock_list = get_cached_stock_list()
     try:
-        result = resync(friend, stock_list)
+        # 儀表板只是「看」,走只讀路徑不回寫試算表(回寫留給記帳/撤銷/每日 tick)——成本與延遲優化
+        result = read_all_account_positions(friend, stock_list)
     except (OAuthInvalidGrantError, HttpError):
         return LiffSummaryResponse(linked=True, status=FriendStatus.NEEDS_REAUTH)
 

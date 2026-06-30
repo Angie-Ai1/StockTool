@@ -61,6 +61,7 @@ from app.services.sheets_client import (
     append_transaction_rows,
     create_account_tab,
     delete_transaction_rows,
+    read_all_account_positions,
     read_tab_positions,
     resync,
 )
@@ -429,7 +430,8 @@ def _handle_query(reply_token: str, friend: FriendRecord) -> None:
     _clear_pending(friend.line_user_id)
     stock_list = get_cached_stock_list()
     try:
-        result = resync(friend, stock_list)
+        # 查詢只是「看」,走只讀路徑不回寫試算表(回寫留給記帳/撤銷/每日 tick)——成本與延遲優化
+        result = read_all_account_positions(friend, stock_list)
     except OAuthInvalidGrantError:
         _reply_text(reply_token, f"試算表授權已過期,需要重新連結:{_liff_oauth_url()}")
         return
