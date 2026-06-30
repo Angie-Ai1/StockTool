@@ -7,7 +7,7 @@ _handle_text_message() 完整流程:
   3. 「❌ 刪除上一筆」→ 刪除上一次記帳(5 分鐘內有效)
   4. 「查詢」→ 回覆目前庫存/損益摘要
   5. 「立即同步」→ 重新計算並寫回試算表狀態欄
-  6. 「新增帳戶 <名稱>」→ 建立新帳戶分頁
+  6. 「新增分頁 <名稱>」(或舊說法「新增帳戶」)→ 建立新帳戶分頁
   7. 多帳戶未標籤 → Quick Reply 詢問帳戶(5 分鐘有效期)
   8. 已連結(含 Quick Reply 選擇回應) → parse → fuzzy match → 賣超防呆 → 寫入試算表 → 回覆(含刪除 Quick Reply)
 """
@@ -626,13 +626,15 @@ def _handle_text_message(event: MessageEvent) -> None:
     if text == "立即同步":
         _handle_sync(event.reply_token, friend)
         return
-    if text.startswith("新增帳戶"):
-        tab_name = text.removeprefix("新增帳戶").strip()
-        if not tab_name:
-            _reply_text(event.reply_token, "請輸入帳戶名稱，例如：新增帳戶 海外股")
+    # 「新增分頁」(使用說明採用的說法)與「新增帳戶」(舊說法)皆可觸發新增分頁
+    for _add_tab_prefix in ("新增分頁", "新增帳戶"):
+        if text.startswith(_add_tab_prefix):
+            tab_name = text.removeprefix(_add_tab_prefix).strip()
+            if not tab_name:
+                _reply_text(event.reply_token, "請輸入分頁名稱，例如：新增分頁 海外帳戶")
+                return
+            _handle_add_tab(event.reply_token, friend, tab_name)
             return
-        _handle_add_tab(event.reply_token, friend, tab_name)
-        return
 
     # 先檢查是否為多帳戶 Quick Reply 的帳戶選擇回應
     pending = _get_pending(line_user_id)
