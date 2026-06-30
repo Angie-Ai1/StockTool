@@ -126,3 +126,71 @@ class LiffSummaryResponse(BaseModel):
     linked: bool
     status: FriendStatus | None = None
     accounts: list[AccountSummary] = []
+
+
+# --- 動態圖表網頁：時間序歷史（階段 1 重放流水帳重建；market_value 等需階段 3 快照才有值）---
+
+
+class HistoryPoint(BaseModel):
+    """某一天的累積快照。
+
+    `cost_basis`(持倉成本=Σ均價×股數)與 `realized_pnl`(累積已實現損益)純由流水帳重放
+    得出,任何時候都有值;`market_value`/`unrealized_pnl`/`total_pnl` 需要當日收盤價,
+    階段 1(無歷史股價)為 None,階段 3 每日快照累積後才填入。
+    """
+
+    date: Date
+    cost_basis: Decimal
+    realized_pnl: Decimal
+    quantity: Decimal | None = None  # 個股層級才有意義(持股股數);帳戶/組合彙總為 None
+    market_value: Decimal | None = None
+    unrealized_pnl: Decimal | None = None
+    total_pnl: Decimal | None = None
+
+
+class StockHistory(BaseModel):
+    """單一股票的時間序(供個股篩選/堆疊圖)。points 從該股第一次進場日起算。"""
+
+    stock_code: str
+    stock_name: str
+    points: list[HistoryPoint] = []
+
+
+class AccountHistory(BaseModel):
+    """單一帳戶(分頁)的時間序;points 對齊整體日期軸,stocks 為該帳戶各檔個股序列。"""
+
+    tab_name: str
+    points: list[HistoryPoint] = []
+    stocks: list[StockHistory] = []
+
+
+class TransactionEvent(BaseModel):
+    """單筆交易事件(供交易分布/散點圖、明細篩選用)。"""
+
+    date: Date
+    tab_name: str
+    action: TransactionAction
+    stock_code: str
+    stock_name: str
+    quantity: Decimal | None = None
+    amount: Decimal | None = None
+
+
+class PortfolioHistory(BaseModel):
+    """整份試算表重建出的時間序:組合彙總 + 各帳戶 + 交易事件。
+
+    `has_market_data` 表示 market_value 等欄位是否有值(需歷史股價);階段 1 為 False。
+    """
+
+    points: list[HistoryPoint] = []
+    accounts: list[AccountHistory] = []
+    events: list[TransactionEvent] = []
+    has_market_data: bool = False
+
+
+class HistoryResponse(BaseModel):
+    """`GET /liff/history` 回應 — 動態圖表網頁的時間序資料來源。"""
+
+    linked: bool
+    status: FriendStatus | None = None
+    history: PortfolioHistory | None = None
