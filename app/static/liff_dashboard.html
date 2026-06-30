@@ -650,9 +650,17 @@ async function main() {
     const idToken = liff.getIDToken();
     const headers = { Authorization: 'Bearer ' + idToken };
 
+    const fetchRetry = async (url, opts, tries = 3) => {
+      for (let i = 0; i < tries; i++) {
+        const res = await fetch(url, opts);
+        if (res.status !== 503 || i === tries - 1) return res;
+        await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+      }
+    };
+
     const [sRes, hRes] = await Promise.all([
-      fetch('/liff/summary', { headers }),
-      fetch('/liff/history', { headers }),
+      fetchRetry('/liff/summary', { headers }),
+      fetchRetry('/liff/history', { headers }),
     ]);
     if (!sRes.ok || !hRes.ok) throw new Error(`API 錯誤 (summary:${sRes.status} / history:${hRes.status})`);
 
