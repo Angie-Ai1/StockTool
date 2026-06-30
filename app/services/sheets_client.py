@@ -723,6 +723,68 @@ def read_all_account_transactions(
     return result
 
 
+def read_all_account_positions(
+    friend: FriendRecord,
+    stock_list: list[StockQuote],
+    *,
+    credentials_builder=build_credentials_from_encrypted_refresh_token,
+    refresher=refresh_or_raise,
+    sheets_service_builder=lambda credentials: build(
+        "sheets", "v4", credentials=credentials, cache_discovery=False
+    ),
+    firestore_client=None,
+) -> ResyncResult:
+    """只讀版的 resync：讀所有帳戶分頁、用同一套 `resync_account_tab` 算損益，但**不回寫**
+    試算表（不套格式、不寫公式/報價/狀態欄）——供「查詢」與 LIFF 儀表板這類「純看」路徑用。
+
+    與 `resync` 的差異只在於省略所有寫入：辨認分頁、解析列、算庫存/損益的邏輯完全共用
+    `find_ledger_header_row` / `map_header_columns` / `resync_account_tab`，所以顯示出來的
+    數字與 resync 一致。回寫（含舊版面自動升級、報價刷新）留給記帳、撤銷、每日 tick。
+
+    仍會刷新 `account_tabs_cache`（Firestore 寫入，非 Sheets）：成本低，且讓記帳的帳戶
+    路由能跟上使用者手動新增的分頁。OAuth 失效/試算表被刪的處理與 resync 一致。
+    """
+    credentials = credentials_builder(friend.encrypted_refresh_token)
+    try:
+        refresher(credentials)
+    except OAuthInvalidGrantError:
+        mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
+        raise
+
+    service = sheets_service_builder(credentials)
+    try:
+        spreadsheet = service.spreadsheets().get(spreadsheetId=friend.spreadsheet_id).execute()
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
+        raise
+
+    accounts: list[AccountResyncResult] = []
+    registered_tabs: list[str] = []
+    for sheet in spreadsheet.get("sheets", []):
+        title = sheet["properties"]["title"]
+        values_response = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=friend.spreadsheet_id, range=f"'{title}'")
+            .execute()
+        )
+        rows = values_response.get("values", [])
+        if not rows:
+            continue
+        header_row_idx = find_ledger_header_row(rows)
+        if header_row_idx is None:
+            continue  # 標題列結構不符,不是帳戶分頁——規格 1.6
+        header_index = map_header_columns(rows[header_row_idx])
+        positions, _ = resync_account_tab(rows[header_row_idx + 1:], header_index, stock_list)
+        registered_tabs.append(title)
+        accounts.append(AccountResyncResult(tab_name=title, positions=list(positions.values())))
+
+    update_account_tabs_cache(friend.line_user_id, registered_tabs, firestore_client=firestore_client)
+
+    return ResyncResult(accounts=accounts)
+
+
 def _txn_to_row_values(txn: TransactionRow, header_index: dict[str, int], num_cols: int) -> list[str]:
     """把一筆交易轉成 A–G 欄的列值（依標題列欄位順序擺放）"""
     new_row = [""] * num_cols

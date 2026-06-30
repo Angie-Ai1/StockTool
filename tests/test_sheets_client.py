@@ -274,6 +274,56 @@ def test_resync_marks_needs_reauth_and_reraises_on_spreadsheet_not_found(monkeyp
     mark_needs_reauth.assert_called_once_with("U123456", firestore_client=ANY)
 
 
+# --- read_all_account_positions（只讀路徑，A 方案）-------------------------------
+
+
+def test_read_all_account_positions_computes_same_positions_without_writeback(monkeypatch):
+    """只讀路徑算出的 positions 要和 resync 一致,但完全不對試算表做任何寫入。"""
+    update_cache = MagicMock()
+    monkeypatch.setattr(sheets_client, "update_account_tabs_cache", update_cache)
+    fake_service = _fake_service_with_tabs()
+
+    result = sheets_client.read_all_account_positions(
+        _fake_friend(),
+        STOCK_LIST,
+        credentials_builder=lambda enc: MagicMock(),
+        refresher=MagicMock(),
+        sheets_service_builder=lambda credentials: fake_service,
+        firestore_client=MagicMock(),
+    )
+
+    # 損益計算與 resync 完全一致
+    assert [account.tab_name for account in result.accounts] == ["個人帳"]
+    assert result.accounts[0].positions == [
+        Position(stock_code="2330", quantity=Decimal("10"), avg_cost=Decimal("600"))
+    ]
+    # 核心保證：沒有任何回寫(values.update 與 batchUpdate 皆 0 次)
+    assert fake_service.spreadsheets.return_value.values.return_value.update.call_count == 0
+    assert fake_service.spreadsheets.return_value.batchUpdate.call_count == 0
+    # 分頁清單仍刷新(Firestore 寫入,非 Sheets)
+    update_cache.assert_called_once_with("U123456", ["個人帳"], firestore_client=ANY)
+
+
+def test_read_all_account_positions_marks_needs_reauth_on_invalid_grant(monkeypatch):
+    mark_needs_reauth = MagicMock()
+    monkeypatch.setattr(sheets_client, "mark_needs_reauth", mark_needs_reauth)
+
+    def raising_refresher(credentials):
+        raise OAuthInvalidGrantError("boom")
+
+    with pytest.raises(OAuthInvalidGrantError):
+        sheets_client.read_all_account_positions(
+            _fake_friend(),
+            STOCK_LIST,
+            credentials_builder=lambda enc: MagicMock(),
+            refresher=raising_refresher,
+            sheets_service_builder=MagicMock(),
+            firestore_client=MagicMock(),
+        )
+
+    mark_needs_reauth.assert_called_once_with("U123456", firestore_client=ANY)
+
+
 # --- read_tab_positions -----------------------------------------------------------
 
 
