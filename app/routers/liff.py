@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.models.schemas import (
     AccountSummary,
     FriendStatus,
+    HistoryResponse,
     LiffSummaryResponse,
     Position,
     PositionSummary,
@@ -27,9 +28,11 @@ from app.models.schemas import (
 )
 from app.routers.tick import get_cached_stock_list
 from app.services.friend_repository import get_friend_by_spreadsheet_id, get_friend_record
+from app.services.history_engine import reconstruct_history
+from app.services.fuzzy_match import resolve_stock
 from app.services.oauth_service import OAuthInvalidGrantError
 from app.services.pnl_engine import compute_unrealized_pnl
-from app.services.sheets_client import resync
+from app.services.sheets_client import read_all_account_transactions, resync
 
 router = APIRouter()
 
@@ -160,3 +163,45 @@ def liff_summary(authorization: str = Header(...)) -> LiffSummaryResponse:
         for account in result.accounts
     ]
     return LiffSummaryResponse(linked=True, status=friend.status, accounts=accounts)
+
+
+def _stock_resolver(stock_list: list[StockQuote]):
+    """把流水帳「股票代碼/名稱」原始文字解析成 StockQuote,認不出回 None——供時間序引擎用。"""
+
+    def resolve(query: str) -> StockQuote | None:
+        try:
+            return resolve_stock(query, stock_list)
+        except ValueError:
+            return None
+
+    return resolve
+
+
+@router.get("/liff/history")
+def liff_history(authorization: str = Header(...)) -> HistoryResponse:
+    """動態圖表網頁的時間序資料 — 讀流水帳重放重建(階段 1)。
+
+    身分驗證沿用 `/liff/summary` 的 id_token 機制。階段 1 無歷史股價,回傳的
+    `market_value`/未實現損益為 None(`has_market_data=False`);只重建持倉成本與
+    累積已實現損益曲線,等階段 3 每日快照累積後再補上淨值曲線。
+    """
+    id_token = _extract_bearer_token(authorization)
+    try:
+        line_user_id = verify_liff_id_token(id_token)
+    except InvalidLiffIdTokenError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    friend = get_friend_record(line_user_id)
+    if friend is None:
+        return HistoryResponse(linked=False)
+    if friend.status == FriendStatus.NEEDS_REAUTH:
+        return HistoryResponse(linked=True, status=FriendStatus.NEEDS_REAUTH)
+
+    stock_list = get_cached_stock_list()
+    try:
+        transactions = read_all_account_transactions(friend)
+    except (OAuthInvalidGrantError, HttpError):
+        return HistoryResponse(linked=True, status=FriendStatus.NEEDS_REAUTH)
+
+    history = reconstruct_history(transactions, _stock_resolver(stock_list))
+    return HistoryResponse(linked=True, status=friend.status, history=history)
