@@ -643,12 +643,38 @@ function showError(msg) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+// 解出 id_token 的 exp 判斷是否過期。LIFF 的坑:getIDToken() 回的是「登入當下」發的
+// id_token，SDK 只自動續 access token，id_token 不會跟著刷新，放久了就過期
+//（LINE verify 回 IdToken expired → 401）。解不開一律當作無效，強制重登。
+function isIdTokenExpired(idToken) {
+  try {
+    const b64 = idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const json = decodeURIComponent(atob(b64).split('').map(
+      c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join(''));
+    const exp = JSON.parse(json).exp;
+    return !exp || exp * 1000 <= Date.now() + 60000;  // 提早 60 秒視為過期，避免邊界誤差
+  } catch {
+    return true;
+  }
+}
+
 async function main() {
   try {
     await liff.init({ liffId: '__LIFF_DASHBOARD_ID__' });
     if (!liff.isLoggedIn()) { liff.login(); return; }
 
-    const idToken = liff.getIDToken();
+    let idToken = liff.getIDToken();
+    // id_token 過期/缺失就強制重新登入換一張新的；sessionStorage 旗標確保只重登一次，
+    // 避免萬一仍換不到新 token 時陷入無限重登迴圈。
+    if (!idToken || isIdTokenExpired(idToken)) {
+      if (!sessionStorage.getItem('idTokenRelogin')) {
+        sessionStorage.setItem('idTokenRelogin', '1');
+        liff.login({ redirectUri: location.href });
+        return;
+      }
+    } else {
+      sessionStorage.removeItem('idTokenRelogin');  // 拿到有效 token 就清掉防呆旗標
+    }
     const headers = { Authorization: 'Bearer ' + idToken };
 
     // Cloud Run min-instances=0 冷啟動時，重的 resync(/liff/summary) 可能持續回 503，
