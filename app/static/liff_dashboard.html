@@ -434,7 +434,7 @@ function renderCostChart() {
     grid: { top: 20, right: 20, bottom: useStocks && stocks.length > 1 ? 50 : 35, left: 70 },
     tooltip: {
       trigger: 'axis',
-      formatter: params => params[0].axisValue + '<br>' +
+      formatter: params => params[0].value[0] + '<br>' +
         params.map(p => `${p.marker}${p.seriesName}: ${fmt(p.value[1])}`).join('<br>'),
     },
     legend: useStocks && stocks.length > 1 ? { bottom: 0, textStyle: { color: t.muted } } : { show: false },
@@ -462,7 +462,7 @@ function renderPnlChart() {
       trigger: 'axis',
       formatter: params => {
         const v = params[0].value[1];
-        return `${params[0].axisValue}<br>${params[0].marker}已實現損益: ${(v >= 0 ? '+' : '') + fmt(v)}`;
+        return `${params[0].value[0]}<br>${params[0].marker}已實現損益: ${(v >= 0 ? '+' : '') + fmt(v)}`;
       },
     },
     legend: { show: false },
