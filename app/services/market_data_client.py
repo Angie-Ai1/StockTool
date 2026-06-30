@@ -48,6 +48,20 @@ def fetch_tpex_listing(client: httpx.Client) -> list[StockQuote]:
 
 
 def fetch_stock_list() -> list[StockQuote]:
-    """合併上市 + 上櫃清單,供 fuzzy_match 比對與 1.9 收盤價任務共用。"""
+    """合併上市 + 上櫃清單,供 fuzzy_match 比對與 1.9 收盤價任務共用。
+
+    個別來源容錯:單一交易所(TWSE/TPEx)抓取失敗時,仍回傳另一個來源的清單,
+    避免一邊暫時故障就讓整批收盤價更新停擺。兩邊都失敗才往上拋,讓 tick 中止並於
+    下次重試——不會用空清單去 resync,以免把每列都標成「無法辨識」回寫試算表。
+    """
+    quotes: list[StockQuote] = []
+    errors: list[Exception] = []
     with httpx.Client(timeout=10) as client:
-        return fetch_twse_listing(client) + fetch_tpex_listing(client)
+        for fetch in (fetch_twse_listing, fetch_tpex_listing):
+            try:
+                quotes.extend(fetch(client))
+            except Exception as exc:  # noqa: BLE001 — 單一來源故障不應拖垮另一來源
+                errors.append(exc)
+    if not quotes and errors:
+        raise errors[0]
+    return quotes
