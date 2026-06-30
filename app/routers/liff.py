@@ -161,7 +161,7 @@ def liff_summary(authorization: str = Header(...)) -> LiffSummaryResponse:
 
     stock_list = get_cached_stock_list()
     try:
-        # 儀表板只是「看」,走只讀路徑不回寫試算表(回寫留給記帳/撤銷/每日 tick)——成本與延遲優化
+        # 儀表板只是「看」,走只讀路徑不回寫試算表(回寫留給記帳/刪除/每日 tick)——成本與延遲優化
         result = read_all_account_positions(friend, stock_list)
     except (OAuthInvalidGrantError, HttpError):
         return LiffSummaryResponse(linked=True, status=FriendStatus.NEEDS_REAUTH)
