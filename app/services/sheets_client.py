@@ -37,7 +37,7 @@ from app.services.oauth_service import (
 )
 from app.services.pnl_engine import InsufficientPositionError, apply_transaction
 
-DEFAULT_SPREADSHEET_NAME = "股市記帳"
+DEFAULT_SPREADSHEET_NAME = "記帳小幫手"
 
 # 帳戶分頁的標題列必須同時具備這些欄位才會被辨認為「帳戶分頁」——規格 1.6、
 # 技術文件 3.2。親友若把標題列改掉,後端會認不出來(規格已知限制,寫進範本提示文字)。
@@ -85,7 +85,7 @@ def find_ledger_header_row(rows: list[list[str]]) -> int | None:
     """在整頁 values 裡定位流水帳標頭的 0-indexed 列號，找不到回 None。
 
     優先找新版面位置（標頭 row3 → index 2），再退回舊版面（標頭 row1 → index 0），
-    讓記帳/查詢/撤銷在「舊分頁尚未被 resync 升級」的過渡期仍能正確運作。
+    讓記帳/查詢/刪除在「舊分頁尚未被 resync 升級」的過渡期仍能正確運作。
     """
     new_idx = LEDGER_HEADER_ROW - 1  # row3 → 2
     if new_idx < len(rows) and map_header_columns(rows[new_idx]) is not None:
@@ -763,7 +763,7 @@ def read_all_account_positions(
 
     與 `resync` 的差異只在於省略所有寫入：辨認分頁、解析列、算庫存/損益的邏輯完全共用
     `find_ledger_header_row` / `map_header_columns` / `resync_account_tab`，所以顯示出來的
-    數字與 resync 一致。回寫（含舊版面自動升級、報價刷新）留給記帳、撤銷、每日 tick。
+    數字與 resync 一致。回寫（含舊版面自動升級、報價刷新）留給記帳、刪除、每日 tick。
 
     仍會刷新 `account_tabs_cache`（Firestore 寫入，非 Sheets）：成本低，且讓記帳的帳戶
     路由能跟上使用者手動新增的分頁。OAuth 失效/試算表被刪的處理與 resync 一致。

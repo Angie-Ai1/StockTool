@@ -1,6 +1,6 @@
 # LINE 股市記帳小工具 — 開發進度
 
-> 最後更新：2026-06-29 02:23
+> 最後更新：2026-06-30 18:36
 
 ## 整體進度
 
@@ -9,9 +9,9 @@
 | 規格設計（Phase 1 MVP） | 100% | 已定案 |
 | 規格設計（Phase 2~8） | 約 70% | 功能範圍已定，部分細節待展開 |
 | Phase 0 基礎設施 | 97% | 僅缺 `ADMIN_LINE_USER_ID` |
-| Phase 1 MVP 程式碼 | ~88%（約 42/48） | 1.8 部分完成、立即同步/新增帳戶指令上線 |
+| Phase 1 MVP 程式碼 | ~93%（約 45/48） | 1.8 完成、1.11 儀表板上線、1.10/1.12 未開始 |
 | 部署上線：基礎設施 | 100% | Cloud Run + Cloud Build CD 正常 |
-| 部署上線：功能 | ~90% | 記帳/撤銷/查詢/同步端對端驗證通過；LIFF OAuth 行動裝置已驗證通過、debug code 已移除 |
+| 部署上線：功能 | ~95% | 記帳/刪除/查詢/同步/LIFF 儀表板端對端驗證通過；待設 APP_BASE_URL / LIFF_DASHBOARD_URL |
 
 ---
 
@@ -41,11 +41,11 @@
 | ✅ | 1.4 記帳文字解析 | parser + fuzzy_match + 多帳戶 Quick Reply |
 | ✅ | 1.5 損益引擎 | 移動加權平均、已實現/未實現損益、賣超防呆 |
 | ✅ | 1.6 試算表 resync | resync + `立即同步` LINE 指令 + `POST /sheets/sync` 端點 |
-| ✅ | 1.7 防呆撤銷與查詢 | 撤銷上一筆 + Rich Menu 查詢 |
-| 🔄 | 1.8 首次使用引導與使用說明頁 | follow 歡迎訊息 ✅、使用說明指令 ✅、試算表「使用說明」分頁 ✅（取代舊「操作面板」，移除按鈕/重複統計，改為純操作指南）；首次使用流程引導待確認 |
+| ✅ | 1.7 防呆刪除與查詢 | 刪除上一筆 + Rich Menu 查詢 |
+| ✅ | 1.8 首次使用引導與使用說明頁 | 歡迎訊息（含歡迎海報圖片）、使用說明指令、試算表說明分頁、格式統一；新增「新增分頁」多帳戶說明 |
 | ✅ | 1.9 排程 | `/tick`，共享密鑰驗證，14:30 收盤任務 |
 | ⬜ | 1.10 共用通知元件 | 未開始 |
-| ✅ | 1.11 LIFF 網頁 | id_token 驗證、`/liff/summary` |
+| ✅ | 1.11 LIFF 網頁 | `GET /liff/dashboard` 儀表板上線，含圖表/篩選/主題；`/liff/summary` + `/liff/history` 串接完成 |
 | ⬜ | 1.12 溫度感文案 | 未開始 |
 | ✅ | 1.13 測試 | 148 案例全數通過 |
 
@@ -63,13 +63,16 @@
 | `POST /sheets/sync` | ✅ 以 spreadsheet_id 觸發 resync 的通用同步入口 |
 | `GET /oauth/liff` | ✅ LIFF 授權頁面（LIFF ID 由 settings 注入） |
 | `GET /oauth/url` | ✅ LIFF 用，驗 id_token 後回傳 Google auth URL |
+| `GET /liff/dashboard` | ✅ 動態儀表板頁面，串接 summary + history |
+| `GET /static/*` | ✅ StaticFiles 掛載，供歡迎圖片公開存取 |
 
 ---
 
 ## 下次接續
 
-1. **✅ LIFF OAuth（已完成）**：行動裝置授權流程已驗證通過，`oauth_liff.html` 的 idToken debug 顯示已移除
-2. **試算表手動修復**：把目前已壞掉的試算表 row 1 資料剪下貼回 row 2 下方，讓標題列回到 row 1，再傳「查詢」重新同步
-3. **端對端驗證**：記帳/撤銷/查詢/同步完整流程（手機端）
-4. **1.10 共用通知元件** / **1.12 溫度感文案**（Phase 1 剩餘項目）
-5. 後續 LIFF 動態網頁（圖表 + 篩選 + 搜尋）為獨立前端專案
+1. **Cloud Run 環境變數**（待設定）：`APP_BASE_URL=https://stocktool-22843182344.asia-southeast1.run.app`、`LIFF_DASHBOARD_URL=https://stocktool-22843182344.asia-southeast1.run.app/liff/dashboard`
+2. **Cloud Run 啟動 CPU 加速**：開啟後縮短 cold start，改善手機開儀表板 503 問題
+3. **範本試算表共用設定**：確認設為「知道連結的人可檢視」，親友 OAuth 後才能複製
+4. **Rich Menu 三欄設定**：製作 2500×1686px 背景圖，三欄 Action 設為 MessageAction（使用說明/查詢/立即同步）
+5. **歷史資料匯入**：照流水帳格式貼入，resync 後重建歷史曲線
+6. **1.10 共用通知元件 / 1.12 溫度感文案**（Phase 1 剩餘）

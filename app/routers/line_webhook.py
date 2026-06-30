@@ -1,15 +1,15 @@
 """LINE webhook 路由 — 規格 1.2、1.7:簽章驗證、僅處理 1:1 私訊、事件去重、follow/unfollow、記帳寫入、
-撤銷上一筆、查詢庫存/損益。
+刪除上一筆、查詢庫存/損益。
 
 _handle_text_message() 完整流程:
   1. 未連結 → OAuth 授權 URL
   2. needs_reauth → 重新授權 URL
-  3. 「❌ 刪除上一筆」→ 撤銷上一次記帳(5 分鐘內有效)
+  3. 「❌ 刪除上一筆」→ 刪除上一次記帳(5 分鐘內有效)
   4. 「查詢」→ 回覆目前庫存/損益摘要
   5. 「立即同步」→ 重新計算並寫回試算表狀態欄
   6. 「新增帳戶 <名稱>」→ 建立新帳戶分頁
   7. 多帳戶未標籤 → Quick Reply 詢問帳戶(5 分鐘有效期)
-  8. 已連結(含 Quick Reply 選擇回應) → parse → fuzzy match → 賣超防呆 → 寫入試算表 → 回覆(含撤銷 Quick Reply)
+  8. 已連結(含 Quick Reply 選擇回應) → parse → fuzzy match → 賣超防呆 → 寫入試算表 → 回覆(含刪除 Quick Reply)
 """
 
 import time
@@ -76,7 +76,7 @@ _recent_event_ids: dict[str, float] = {}
 _PENDING_SELECTION_WINDOW = 300
 _pending_selections: dict[str, dict] = {}
 
-# 撤銷上一筆記帳的暫存狀態(process 記憶體,5 分鐘有效)
+# 刪除上一筆記帳的暫存狀態(process 記憶體,5 分鐘有效)
 _PENDING_UNDO_WINDOW = 300
 _pending_undo: dict[str, dict] = {}
 
@@ -122,7 +122,7 @@ def _clear_pending(line_user_id: str) -> None:
     _pending_selections.pop(line_user_id, None)
 
 
-# ── 撤銷暫存 ──────────────────────────────────────────────────────────────────
+# ── 刪除暫存 ──────────────────────────────────────────────────────────────────
 
 def _get_undo(line_user_id: str) -> dict | None:
     entry = _pending_undo.get(line_user_id)
@@ -351,14 +351,14 @@ def _execute_booking_by_tag(
         _reply_text(reply_token, reply_text)
 
 
-# ── 撤銷與查詢 ────────────────────────────────────────────────────────────────
+# ── 刪除與查詢 ────────────────────────────────────────────────────────────────
 
 def _handle_undo(reply_token: str, friend: FriendRecord) -> None:
-    """撤銷上一筆記帳——規格 1.7.1"""
+    """刪除上一筆記帳——規格 1.7.1"""
     _clear_pending(friend.line_user_id)
     undo_info = _get_undo(friend.line_user_id)
     if undo_info is None:
-        _reply_text(reply_token, "刪除時效已過(5 分鐘),無法撤銷")
+        _reply_text(reply_token, "刪除時效已過(5 分鐘),無法刪除")
         return
 
     _clear_undo(friend.line_user_id)
@@ -375,7 +375,7 @@ def _handle_undo(reply_token: str, friend: FriendRecord) -> None:
         return
 
     if deleted > 0:
-        _reply_text(reply_token, f"✅ 已撤銷 {deleted} 筆記帳")
+        _reply_text(reply_token, f"✅ 已刪除 {deleted} 筆記帳")
     else:
         _reply_text(reply_token, "找不到要刪除的紀錄,可能已被手動刪除")
 
@@ -430,7 +430,7 @@ def _handle_query(reply_token: str, friend: FriendRecord) -> None:
     _clear_pending(friend.line_user_id)
     stock_list = get_cached_stock_list()
     try:
-        # 查詢只是「看」,走只讀路徑不回寫試算表(回寫留給記帳/撤銷/每日 tick)——成本與延遲優化
+        # 查詢只是「看」,走只讀路徑不回寫試算表(回寫留給記帳/刪除/每日 tick)——成本與延遲優化
         result = read_all_account_positions(friend, stock_list)
     except OAuthInvalidGrantError:
         _reply_text(reply_token, f"試算表授權已過期,需要重新連結:{_liff_oauth_url()}")
@@ -554,6 +554,11 @@ def _build_usage_guide_text() -> str:
         "輸入「查詢」即可查看持股損益\n"
         "可多筆分行輸入，一次傳送\n"
         "試算表的股票(股數)單位為「股」,若輸入1張,會自動辨識為1000股\n"
+        "\n"
+        "📂 多帳戶管理\n"
+        "新增分頁 <分頁名稱>\n"
+        "例如：新增分頁 海外帳戶\n"
+        "可建立獨立帳戶分頁，分類記錄不同帳戶的持股\n"
         "\n"
         f"📊 查看圖表儀表板\n{_liff_dashboard_url()}\n"
         "\n"
