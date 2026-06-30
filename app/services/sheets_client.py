@@ -661,6 +661,68 @@ def read_tab_positions(
     return positions
 
 
+def read_all_account_transactions(
+    friend: FriendRecord,
+    *,
+    credentials_builder=build_credentials_from_encrypted_refresh_token,
+    refresher=refresh_or_raise,
+    sheets_service_builder=lambda credentials: build(
+        "sheets", "v4", credentials=credentials, cache_discovery=False
+    ),
+    firestore_client=None,
+) -> dict[str, list[TransactionRow]]:
+    """讀取所有帳戶分頁的流水帳列(純讀取,不寫回)——供動態圖表時間序重建用。
+
+    回傳 {分頁名稱: 交易列}。沿用 resync 的分頁辨認(`find_ledger_header_row`)與
+    列解析(`_parse_sheet_row`);解析失敗的列(日期/動作格式錯誤)直接略過,與 resync
+    把它們標記為「無法辨識」的效果一致——不計入時間序。
+    """
+    credentials = credentials_builder(friend.encrypted_refresh_token)
+    try:
+        refresher(credentials)
+    except OAuthInvalidGrantError:
+        mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
+        raise
+
+    service = sheets_service_builder(credentials)
+    try:
+        spreadsheet = service.spreadsheets().get(spreadsheetId=friend.spreadsheet_id).execute()
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
+        raise
+
+    result: dict[str, list[TransactionRow]] = {}
+    for sheet in spreadsheet.get("sheets", []):
+        title = sheet["properties"]["title"]
+        values_response = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=friend.spreadsheet_id, range=f"'{title}'")
+            .execute()
+        )
+        rows = values_response.get("values", [])
+        if not rows:
+            continue
+        header_row_idx = find_ledger_header_row(rows)
+        if header_row_idx is None:
+            continue
+        header_index = map_header_columns(rows[header_row_idx])
+
+        transactions: list[TransactionRow] = []
+        for row in rows[header_row_idx + 1:]:
+            if not _cell(row, header_index, "動作"):
+                continue
+            try:
+                transactions.append(_parse_sheet_row(row, header_index))
+            except ValueError:
+                continue  # 格式錯誤的列略過,不中斷整頁
+        if transactions:
+            result[title] = transactions
+
+    return result
+
+
 def _txn_to_row_values(txn: TransactionRow, header_index: dict[str, int], num_cols: int) -> list[str]:
     """把一筆交易轉成 A–G 欄的列值（依標題列欄位順序擺放）"""
     new_row = [""] * num_cols
