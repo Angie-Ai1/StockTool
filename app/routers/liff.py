@@ -82,6 +82,14 @@ def _to_position_summary(position: Position, stock: StockQuote | None) -> Positi
     )
 
 
+@router.get("/liff/dashboard", response_class=HTMLResponse)
+def liff_dashboard_page() -> str:
+    """回傳動態圖表儀表板頁面，將 __LIFF_DASHBOARD_ID__ 替換為 settings 中的值"""
+    with open("app/static/liff_dashboard.html") as f:
+        html = f.read()
+    return html.replace("__LIFF_DASHBOARD_ID__", get_settings().liff_dashboard_id)
+
+
 @router.get("/oauth/liff", response_class=HTMLResponse)
 def oauth_liff_page() -> str:
     """回傳 LIFF 授權頁面，將 __LIFF_ID__ 替換為 settings 中的實際值"""

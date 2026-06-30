@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>持股儀表板</title>
+<script src="https://static.line-scdn.net/liff/edge/versions/2.22.3/sdk.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+:root {
+  --fs:1; --bg:#f4ece0; --card:#fffdf8; --line:#e6d9c6; --split:#efe6d6;
+  --text:#4a3f33; --muted:#8a7c68; --accent:#c9772f;
+  --pos:#5a9c52; --neg:#cf5b46; --warn:#c9952f;
+  --shadow:0 4px 16px rgba(60,40,20,.08); --shadow-sm:0 1px 4px rgba(60,40,20,.10);
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:-apple-system,"Noto Sans TC",Segoe UI,Roboto,sans-serif;
+  font-size:calc(14px*var(--fs));transition:background .2s,color .2s;
+}
+
+/* Loading */
+#loading{
+  display:flex;align-items:center;justify-content:center;
+  min-height:100vh;flex-direction:column;gap:14px;
+}
+.spinner{
+  width:36px;height:36px;border:3px solid var(--line);
+  border-top-color:var(--accent);border-radius:50%;
+  animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* State card */
+#stateCard{
+  display:none;align-items:center;justify-content:center;min-height:100vh;
+}
+#stateCard.show{display:flex;}
+.state-inner{
+  background:var(--card);border:1px solid var(--line);border-radius:16px;
+  padding:32px 28px;max-width:320px;width:90%;text-align:center;
+  box-shadow:var(--shadow);
+}
+.state-inner h2{font-size:calc(17px*var(--fs));margin-bottom:10px;}
+.state-inner p{color:var(--muted);font-size:calc(13px*var(--fs));margin-bottom:20px;line-height:1.6;}
+.btn-primary{
+  display:block;background:var(--accent);color:#fff;border:none;
+  border-radius:10px;padding:12px 24px;font-size:calc(14px*var(--fs));
+  cursor:pointer;text-decoration:none;text-align:center;
+}
+
+/* App */
+#app{display:none;}
+#app.show{display:block;}
+
+/* Header */
+header{
+  padding:14px 18px;border-bottom:1px solid var(--line);
+  display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
+}
+header h1{font-size:calc(17px*var(--fs));}
+.sync-time{color:var(--muted);font-size:calc(11px*var(--fs));}
+
+/* Controls */
+.controls{
+  display:flex;flex-wrap:wrap;gap:14px 22px;align-items:flex-end;
+  margin:16px 18px 0;padding:14px 18px;
+  background:var(--card);border:1px solid var(--line);
+  border-radius:14px;box-shadow:var(--shadow);
+}
+.ctrl{display:flex;flex-direction:column;gap:6px;}
+.ctrl>label{color:var(--muted);font-size:calc(11.5px*var(--fs));font-weight:600;letter-spacing:.02em;}
+
+/* Select */
+.selectbox{position:relative;display:inline-block;}
+.selectbox::after{
+  content:'▾';position:absolute;right:10px;top:50%;transform:translateY(-50%);
+  color:var(--muted);pointer-events:none;font-size:11px;
+}
+select{
+  appearance:none;-webkit-appearance:none;
+  background:var(--bg);color:var(--text);
+  border:1px solid var(--line);border-radius:10px;
+  padding:8px 28px 8px 12px;font-size:calc(13px*var(--fs));
+  min-width:120px;cursor:pointer;transition:border-color .15s;
+}
+select:focus{outline:none;border-color:var(--accent);}
+
+/* Segmented */
+.seg{
+  display:inline-flex;background:var(--split);
+  border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px;
+}
+.seg button{
+  border:none;background:transparent;color:var(--muted);
+  padding:6px 12px;border-radius:8px;cursor:pointer;
+  font-size:calc(12px*var(--fs));font-weight:500;transition:all .15s;
+}
+.seg button:hover:not(.active){color:var(--text);}
+.seg button.active{background:var(--card);color:var(--accent);font-weight:700;box-shadow:var(--shadow-sm);}
+
+/* Swatches */
+.swatches{display:inline-flex;gap:8px;}
+.swatch{
+  width:26px;height:26px;border-radius:50%;cursor:pointer;
+  border:none;padding:0;box-shadow:inset 0 0 0 1px rgba(0,0,0,.12);
+  transition:transform .12s;
+}
+.swatch:hover{transform:scale(1.15);}
+.swatch.active{box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--accent);}
+
+/* Chips */
+.chips{display:flex;flex-wrap:wrap;gap:7px;max-width:480px;}
+.chip{
+  border:1px solid var(--line);background:var(--bg);color:var(--muted);
+  padding:6px 13px;border-radius:18px;cursor:pointer;
+  font-size:calc(12px*var(--fs));transition:all .15s;
+}
+.chip:hover{border-color:var(--accent);color:var(--text);}
+.chip.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+
+/* KPI row */
+.kpi-row{display:flex;flex-wrap:wrap;gap:10px;margin:14px 18px 0;}
+.kpi{
+  background:var(--card);border:1px solid var(--line);
+  border-radius:12px;padding:11px 15px;flex:1 1 110px;
+}
+.kpi .label{color:var(--muted);font-size:calc(11px*var(--fs));margin-bottom:3px;}
+.kpi .value{font-size:calc(17px*var(--fs));font-weight:700;}
+.kpi .value.pos{color:var(--pos);}
+.kpi .value.neg{color:var(--neg);}
+
+/* Layout */
+.layout{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 18px 18px;}
+@media(max-width:700px){.layout{grid-template-columns:1fr;}}
+.colL,.colR{display:flex;flex-direction:column;gap:12px;}
+
+/* Cards */
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;}
+.card h3{margin:4px 6px 10px;font-size:calc(13.5px*var(--fs));}
+.chart{width:100%;height:260px;}
+.chart-tall{width:100%;height:320px;}
+
+/* Table */
+.tablewrap{overflow-x:auto;}
+table.positions{width:100%;border-collapse:collapse;font-size:calc(12px*var(--fs));}
+table.positions th,table.positions td{
+  padding:7px 8px;text-align:right;
+  border-bottom:1px solid var(--split);white-space:nowrap;
+}
+table.positions th{
+  color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--card);
+}
+table.positions tbody tr:hover td{background:var(--split);}
+table.positions td.name,table.positions th.name{text-align:left;}
+.pos{color:var(--pos);}
+.neg{color:var(--neg);}
+
+/* Empty */
+.empty{color:var(--muted);text-align:center;padding:28px 16px;font-size:calc(12.5px*var(--fs));}
+</style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="loading">
+  <div class="spinner"></div>
+  <span style="color:var(--muted);font-size:13px">載入中…</span>
+</div>
+
+<!-- State: not linked / needs reauth / error -->
+<div id="stateCard">
+  <div class="state-inner">
+    <h2 id="stateTitle"></h2>
+    <p id="stateMsg"></p>
+    <a id="stateBtn" class="btn-primary" href="#" style="display:none">前往授權</a>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <header>
+    <h1>持股儀表板</h1>
+    <span class="sync-time" id="syncTime"></span>
+  </header>
+
+  <div class="controls">
+    <div class="ctrl">
+      <label>帳戶</label>
+      <div class="selectbox"><select id="acctSel"></select></div>
+    </div>
+    <div class="ctrl">
+      <label>時間範圍</label>
+      <div class="seg" id="rangeSeg">
+        <button data-v="3m">3M</button>
+        <button data-v="6m">6M</button>
+        <button data-v="1y">1Y</button>
+        <button data-v="all" class="active">全部</button>
+      </div>
+    </div>
+    <div class="ctrl">
+      <label>字體大小</label>
+      <div class="seg" id="fontSeg">
+        <button data-v="0.9">小</button>
+        <button data-v="1" class="active">中</button>
+        <button data-v="1.15">大</button>
+      </div>
+    </div>
+    <div class="ctrl">
+      <label>主題</label>
+      <div class="swatches" id="themeSw"></div>
+    </div>
+    <div class="ctrl" style="flex:1;min-width:240px">
+      <label>個股篩選（未選＝全部）</label>
+      <div class="chips" id="stockChips"></div>
+    </div>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi"><div class="label">持倉成本</div><div class="value" id="kpiCost">—</div></div>
+    <div class="kpi"><div class="label">已實現損益</div><div class="value" id="kpiRpnl">—</div></div>
+    <div class="kpi"><div class="label">未實現損益</div><div class="value" id="kpiUpnl">—</div></div>
+    <div class="kpi"><div class="label">持倉檔數</div><div class="value" id="kpiPos">—</div></div>
+  </div>
+
+  <div class="layout">
+    <div class="colL">
+      <div class="card">
+        <h3>持倉明細</h3>
+        <div class="tablewrap" id="posTable"></div>
+      </div>
+      <div class="card">
+        <h3>持倉成本走勢</h3>
+        <div id="costChart" class="chart-tall"></div>
+      </div>
+    </div>
+    <div class="colR">
+      <div class="card">
+        <h3>累積已實現損益</h3>
+        <div id="pnlChart" class="chart"></div>
+      </div>
+      <div class="card">
+        <h3>交易紀錄</h3>
+        <div id="eventsChart" class="chart"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const THEMES = {
+  '暖陽米':{ bg:'#f4ece0', card:'#fffdf8', line:'#e6d9c6', split:'#efe6d6', text:'#4a3f33', muted:'#8a7c68', accent:'#c9772f', pos:'#5a9c52', neg:'#cf5b46', warn:'#c9952f' },
+  '純淨白':{ bg:'#f5f7fa', card:'#ffffff', line:'#e3e8ef', split:'#eef1f5', text:'#1f2733', muted:'#6b7480', accent:'#2f7bf0', pos:'#1aa260', neg:'#e23b3b', warn:'#d98a16' },
+  '暗夜藍':{ bg:'#0f1115', card:'#1a1e27', line:'#2a2f3a', split:'#23272f', text:'#e6e8ec', muted:'#8b93a3', accent:'#4ea1ff', pos:'#3ddc84', neg:'#ff6b6b', warn:'#f0b95b' },
+  '森林綠':{ bg:'#0e1a17', card:'#14241f', line:'#22362f', split:'#1c2e28', text:'#e6f0ec', muted:'#85a397', accent:'#2fbf91', pos:'#46d39a', neg:'#ff7a6b', warn:'#e6c15a' },
+};
+const THEME_SWATCHES = ['#c9772f','#2f7bf0','#4ea1ff','#2fbf91'];
+const STOCK_PALETTE = ['#c9772f','#5a9c52','#4ea1ff','#cf5b46','#c9952f','#8a5cc9','#2fbf91','#e67e22'];
+const ACTION_COLOR = { '買進':'#5a9c52', '賣出':'#cf5b46', '配息':'#c9952f', '配股':'#8a7c68' };
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+let summary = null;
+let hist = null;         // PortfolioHistory
+let selAccount = '__all__';
+let selStocks = new Set();
+let timeRange = 'all';
+
+let costChart = null, pnlChart = null, eventsChart = null;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const $ = id => document.getElementById(id);
+
+function fmt(n, decimals = 0) {
+  if (n == null) return '—';
+  return Number(n).toLocaleString('zh-TW', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+function fmtPnl(n) {
+  if (n == null) return { text: '—', cls: '' };
+  const v = Number(n);
+  return { text: (v >= 0 ? '+' : '') + fmt(v), cls: v >= 0 ? 'pos' : 'neg' };
+}
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function filterTime(arr, key = 'date') {
+  if (timeRange === 'all') return arr;
+  const days = { '3m': 90, '6m': 180, '1y': 365 }[timeRange];
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  return arr.filter(item => new Date(item[key]) >= cutoff);
+}
+
+// ── Data accessors ────────────────────────────────────────────────────────────
+
+function getPoints() {
+  if (!hist) return [];
+  if (selAccount === '__all__') return filterTime(hist.points);
+  const acct = hist.accounts.find(a => a.tab_name === selAccount);
+  return filterTime(acct?.points || []);
+}
+
+function getStocks() {
+  if (!hist) return [];
+  let stocks;
+  if (selAccount === '__all__') {
+    const seen = new Set();
+    stocks = hist.accounts.flatMap(a => a.stocks)
+      .filter(s => seen.has(s.stock_code) ? false : seen.add(s.stock_code));
+  } else {
+    const acct = hist.accounts.find(a => a.tab_name === selAccount);
+    stocks = acct?.stocks || [];
+  }
+  if (selStocks.size > 0) stocks = stocks.filter(s => selStocks.has(s.stock_code));
+  return stocks.map(s => ({ ...s, points: filterTime(s.points) }));
+}
+
+function getEvents() {
+  if (!hist) return [];
+  let events = filterTime(hist.events);
+  if (selAccount !== '__all__') events = events.filter(e => e.tab_name === selAccount);
+  if (selStocks.size > 0) events = events.filter(e => selStocks.has(e.stock_code));
+  return events;
+}
+
+function getPositions() {
+  if (!summary?.accounts) return [];
+  const rows = selAccount === '__all__'
+    ? summary.accounts.flatMap(a => a.positions.map(p => ({ ...p, _tab: a.tab_name })))
+    : (summary.accounts.find(a => a.tab_name === selAccount)?.positions || []).map(p => ({ ...p, _tab: selAccount }));
+  return selStocks.size > 0 ? rows.filter(p => selStocks.has(p.stock_code)) : rows;
+}
+
+// ── Render: KPIs ──────────────────────────────────────────────────────────────
+
+function renderKPIs() {
+  const pos = getPositions();
+  const totalCost = pos.reduce((s, p) => s + Number(p.avg_cost) * Number(p.quantity), 0);
+  const totalRpnl = pos.reduce((s, p) => s + Number(p.realized_pnl || 0), 0);
+  const hasUpnl = pos.some(p => p.unrealized_pnl != null);
+  const totalUpnl = hasUpnl ? pos.reduce((s, p) => s + Number(p.unrealized_pnl || 0), 0) : null;
+  const posCount = pos.filter(p => Number(p.quantity) > 0).length;
+
+  $('kpiCost').textContent = fmt(totalCost);
+  $('kpiCost').className = 'value';
+
+  const rpnl = fmtPnl(totalRpnl);
+  $('kpiRpnl').textContent = rpnl.text;
+  $('kpiRpnl').className = 'value ' + rpnl.cls;
+
+  if (totalUpnl != null) {
+    const upnl = fmtPnl(totalUpnl);
+    $('kpiUpnl').textContent = upnl.text;
+    $('kpiUpnl').className = 'value ' + upnl.cls;
+  } else {
+    $('kpiUpnl').textContent = '—';
+    $('kpiUpnl').className = 'value';
+  }
+
+  $('kpiPos').textContent = posCount;
+}
+
+// ── Render: Positions table ───────────────────────────────────────────────────
+
+function renderTable() {
+  const positions = getPositions();
+  if (positions.length === 0) {
+    $('posTable').innerHTML = '<div class="empty">無持倉資料</div>';
+    return;
+  }
+  const multiAcct = selAccount === '__all__' && (summary?.accounts?.length || 0) > 1;
+
+  let html = '<table class="positions"><thead><tr>';
+  if (multiAcct) html += '<th class="name">帳戶</th>';
+  html += '<th class="name">股票</th><th>股數</th><th>均價</th><th>現價</th><th>未實現</th><th>已實現</th></tr></thead><tbody>';
+
+  for (const p of positions) {
+    const upnl = fmtPnl(p.unrealized_pnl);
+    const rpnl = fmtPnl(Number(p.realized_pnl));
+    html += '<tr>';
+    if (multiAcct) html += `<td class="name">${p._tab}</td>`;
+    html += `<td class="name">${p.stock_name}<br><small style="color:var(--muted)">${p.stock_code}</small></td>`;
+    html += `<td>${fmt(p.quantity)}</td>`;
+    html += `<td>${fmt(Number(p.avg_cost), 2)}</td>`;
+    html += `<td>${p.closing_price != null ? fmt(Number(p.closing_price), 2) : '—'}</td>`;
+    html += `<td class="${upnl.cls}">${upnl.text}</td>`;
+    html += `<td class="${rpnl.cls}">${rpnl.text}</td>`;
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  $('posTable').innerHTML = html;
+}
+
+// ── Render: Charts ────────────────────────────────────────────────────────────
+
+function theme() {
+  return {
+    bg: cssVar('--card'), text: cssVar('--text'), muted: cssVar('--muted'),
+    line: cssVar('--line'), accent: cssVar('--accent'), pos: cssVar('--pos'), neg: cssVar('--neg'),
+  };
+}
+
+function renderCostChart() {
+  const t = theme();
+  const stocks = getStocks();
+  const points = getPoints();
+  const useStocks = selStocks.size > 0 && stocks.length > 0;
+
+  const series = useStocks
+    ? stocks.map((s, i) => ({
+        name: s.stock_name,
+        type: 'line', smooth: true, symbol: 'none',
+        data: s.points.map(p => [p.date, Number(p.cost_basis)]),
+        lineStyle: { color: STOCK_PALETTE[i % STOCK_PALETTE.length], width: 2 },
+        areaStyle: { color: STOCK_PALETTE[i % STOCK_PALETTE.length], opacity: 0.1 },
+      }))
+    : [{
+        name: '持倉成本',
+        type: 'line', smooth: true, symbol: 'none',
+        data: points.map(p => [p.date, Number(p.cost_basis)]),
+        lineStyle: { color: t.accent, width: 2.5 },
+        areaStyle: { color: t.accent, opacity: 0.15 },
+      }];
+
+  costChart.setOption({
+    backgroundColor: 'transparent',
+    grid: { top: 20, right: 20, bottom: useStocks && stocks.length > 1 ? 50 : 35, left: 70 },
+    tooltip: {
+      trigger: 'axis',
+      formatter: params => params[0].axisValue + '<br>' +
+        params.map(p => `${p.marker}${p.seriesName}: ${fmt(p.value[1])}`).join('<br>'),
+    },
+    legend: useStocks && stocks.length > 1 ? { bottom: 0, textStyle: { color: t.muted } } : { show: false },
+    xAxis: { type: 'time', axisLabel: { color: t.muted, fontSize: 11 }, splitLine: { show: false } },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: t.muted, fontSize: 11, formatter: v => fmt(v) },
+      splitLine: { lineStyle: { color: t.line, type: 'dashed' } },
+    },
+    series,
+  }, true);
+}
+
+function renderPnlChart() {
+  const t = theme();
+  const points = getPoints();
+  const data = points.map(p => [p.date, Number(p.realized_pnl)]);
+  const lastVal = data.length ? data[data.length - 1][1] : 0;
+  const lineColor = lastVal >= 0 ? t.pos : t.neg;
+
+  pnlChart.setOption({
+    backgroundColor: 'transparent',
+    grid: { top: 20, right: 20, bottom: 35, left: 70 },
+    tooltip: {
+      trigger: 'axis',
+      formatter: params => {
+        const v = params[0].value[1];
+        return `${params[0].axisValue}<br>${params[0].marker}已實現損益: ${(v >= 0 ? '+' : '') + fmt(v)}`;
+      },
+    },
+    legend: { show: false },
+    xAxis: { type: 'time', axisLabel: { color: t.muted, fontSize: 11 }, splitLine: { show: false } },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: t.muted, fontSize: 11, formatter: v => fmt(v) },
+      splitLine: { lineStyle: { color: t.line, type: 'dashed' } },
+    },
+    series: [{
+      type: 'line', smooth: true, symbol: 'none',
+      data,
+      lineStyle: { color: lineColor, width: 2.5 },
+      areaStyle: { color: lineColor, opacity: 0.15 },
+    }],
+  }, true);
+}
+
+function renderEventsChart() {
+  const t = theme();
+  const events = getEvents();
+
+  const byAction = {};
+  for (const e of events) {
+    if (!byAction[e.action]) byAction[e.action] = [];
+    byAction[e.action].push({
+      value: [e.date, Math.abs(Number(e.amount || 0))],
+      name: `${e.stock_name} (${e.stock_code})`,
+      qty: e.quantity,
+    });
+  }
+
+  const series = Object.entries(byAction).map(([action, data]) => ({
+    name: action,
+    type: 'scatter',
+    data: data.map(d => ({ value: d.value, name: d.name, qty: d.qty })),
+    symbolSize: d => Math.max(6, Math.min(8 + Math.sqrt(d[1] / 5000), 24)),
+    itemStyle: { color: ACTION_COLOR[action] || t.muted, opacity: 0.8 },
+    tooltip: {
+      formatter: p => `${p.data.value[0]}<br>${p.seriesName}｜${p.data.name}<br>金額：${fmt(p.data.value[1])}｜股數：${fmt(p.data.qty)}`,
+    },
+  }));
+
+  eventsChart.setOption({
+    backgroundColor: 'transparent',
+    grid: { top: 20, right: 20, bottom: Object.keys(byAction).length > 0 ? 50 : 35, left: 70 },
+    legend: { bottom: 0, textStyle: { color: t.muted }, data: Object.keys(byAction) },
+    tooltip: { trigger: 'item' },
+    xAxis: { type: 'time', axisLabel: { color: t.muted, fontSize: 11 }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } },
+    yAxis: { type: 'value', axisLabel: { color: t.muted, fontSize: 11, formatter: v => fmt(v) }, splitLine: { lineStyle: { color: t.line, type: 'dashed' } } },
+    series: series.length ? series : [{ type: 'scatter', data: [] }],
+  }, true);
+}
+
+function renderAll() {
+  renderKPIs();
+  renderTable();
+  renderCostChart();
+  renderPnlChart();
+  renderEventsChart();
+}
+
+// ── Controls ──────────────────────────────────────────────────────────────────
+
+function initControls() {
+  // Account selector
+  const sel = $('acctSel');
+  sel.innerHTML = '<option value="__all__">全部帳戶</option>';
+  (summary?.accounts || []).forEach(a => {
+    const opt = document.createElement('option');
+    opt.value = a.tab_name;
+    opt.textContent = a.tab_name;
+    sel.appendChild(opt);
+  });
+  sel.addEventListener('change', () => {
+    selAccount = sel.value;
+    selStocks = new Set();
+    renderChips();
+    renderAll();
+  });
+
+  // Time range
+  $('rangeSeg').addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    $('rangeSeg').querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    timeRange = btn.dataset.v;
+    renderAll();
+  });
+
+  // Font size
+  $('fontSeg').addEventListener('click', e => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    $('fontSeg').querySelectorAll('button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.documentElement.style.setProperty('--fs', btn.dataset.v);
+    [costChart, pnlChart, eventsChart].forEach(c => c?.resize());
+  });
+
+  // Theme swatches
+  const sw = $('themeSw');
+  Object.entries(THEMES).forEach(([name, t], i) => {
+    const btn = document.createElement('button');
+    btn.className = 'swatch' + (i === 0 ? ' active' : '');
+    btn.title = name;
+    btn.style.background = THEME_SWATCHES[i];
+    btn.addEventListener('click', () => {
+      sw.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+      btn.classList.add('active');
+      const root = document.documentElement;
+      Object.entries(t).forEach(([k, v]) => root.style.setProperty('--' + k, v));
+      renderAll();
+    });
+    sw.appendChild(btn);
+  });
+
+  renderChips();
+}
+
+function renderChips() {
+  const container = $('stockChips');
+  let stocks;
+  if (selAccount === '__all__') {
+    const seen = new Set();
+    stocks = (hist?.accounts || []).flatMap(a => a.stocks)
+      .filter(s => seen.has(s.stock_code) ? false : seen.add(s.stock_code));
+  } else {
+    const acct = hist?.accounts?.find(a => a.tab_name === selAccount);
+    stocks = acct?.stocks || [];
+  }
+
+  container.innerHTML = '';
+  stocks.forEach(s => {
+    const btn = document.createElement('button');
+    btn.className = 'chip' + (selStocks.has(s.stock_code) ? ' active' : '');
+    btn.textContent = `${s.stock_name} ${s.stock_code}`;
+    btn.addEventListener('click', () => {
+      if (selStocks.has(s.stock_code)) {
+        selStocks.delete(s.stock_code);
+        btn.classList.remove('active');
+      } else {
+        selStocks.add(s.stock_code);
+        btn.classList.add('active');
+      }
+      renderAll();
+    });
+    container.appendChild(btn);
+  });
+}
+
+// ── State helpers ─────────────────────────────────────────────────────────────
+
+function showState(type) {
+  $('loading').style.display = 'none';
+  const cfg = {
+    unlinked: { title: '尚未連結試算表', msg: '請先完成 Google 帳號授權，才能查看持股儀表板。', btn: '前往授權', href: '/oauth/liff' },
+    reauth:   { title: '授權已過期', msg: 'Google 授權已失效，請重新授權以繼續使用。', btn: '重新授權', href: '/oauth/liff' },
+  }[type];
+
+  $('stateTitle').textContent = cfg?.title || '發生錯誤';
+  $('stateMsg').textContent = cfg?.msg || '請稍後再試';
+  const btn = $('stateBtn');
+  if (cfg?.btn) { btn.textContent = cfg.btn; btn.href = cfg.href; btn.style.display = 'block'; }
+  else { btn.style.display = 'none'; }
+  $('stateCard').classList.add('show');
+}
+
+function showError(msg) {
+  $('loading').style.display = 'none';
+  $('stateTitle').textContent = '載入失敗';
+  $('stateMsg').textContent = msg || '請稍後再試';
+  $('stateBtn').style.display = 'none';
+  $('stateCard').classList.add('show');
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+async function main() {
+  try {
+    await liff.init({ liffId: '__LIFF_DASHBOARD_ID__' });
+    if (!liff.isLoggedIn()) { liff.login(); return; }
+
+    const idToken = liff.getIDToken();
+    const headers = { Authorization: 'Bearer ' + idToken };
+
+    const [sRes, hRes] = await Promise.all([
+      fetch('/liff/summary', { headers }),
+      fetch('/liff/history', { headers }),
+    ]);
+    if (!sRes.ok || !hRes.ok) throw new Error(`API 錯誤 (summary:${sRes.status} / history:${hRes.status})`);
+
+    summary = await sRes.json();
+    const histResp = await hRes.json();
+    hist = histResp.history;
+
+    if (!summary.linked) return showState('unlinked');
+    if (summary.status === 'needs_reauth') return showState('reauth');
+
+    $('syncTime').textContent = `同步時間：${new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}`;
+
+    costChart  = echarts.init($('costChart'));
+    pnlChart   = echarts.init($('pnlChart'));
+    eventsChart = echarts.init($('eventsChart'));
+    window.addEventListener('resize', () => [costChart, pnlChart, eventsChart].forEach(c => c.resize()));
+
+    initControls();
+    renderAll();
+
+    $('loading').style.display = 'none';
+    $('app').classList.add('show');
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+main();
+</script>
+</body>
+</html>
