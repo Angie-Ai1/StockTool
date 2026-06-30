@@ -166,7 +166,7 @@ table.positions td.name,table.positions th.name{text-align:left;}
 <!-- Loading -->
 <div id="loading">
   <div class="spinner"></div>
-  <span style="color:var(--muted);font-size:13px">載入中…</span>
+  <span id="loadingText" style="color:var(--muted);font-size:13px">載入中…</span>
 </div>
 
 <!-- State: not linked / needs reauth / error -->
@@ -650,11 +650,18 @@ async function main() {
     const idToken = liff.getIDToken();
     const headers = { Authorization: 'Bearer ' + idToken };
 
-    const fetchRetry = async (url, opts, tries = 3) => {
+    // Cloud Run min-instances=0 冷啟動時，重的 resync(/liff/summary) 可能持續回 503，
+    // 需要較長、較多次的重試撐過容器暖機（單次最多約 2+3+4+4+4+4 ≈ 21s）
+    const fetchRetry = async (url, opts, tries = 6) => {
       for (let i = 0; i < tries; i++) {
-        const res = await fetch(url, opts);
-        if (res.status !== 503 || i === tries - 1) return res;
-        await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+        try {
+          const res = await fetch(url, opts);
+          if (res.status !== 503 || i === tries - 1) return res;
+        } catch (err) {
+          if (i === tries - 1) throw err;  // 網路錯誤也重試（冷啟動期間連線可能被拒）
+        }
+        if (i === 0) $('loadingText').textContent = '伺服器喚醒中，請稍候…';
+        await new Promise(r => setTimeout(r, Math.min(2000 + 1000 * i, 4000)));
       }
     };
 
