@@ -200,6 +200,15 @@ def _fake_service_with_tabs():
         return mock
 
     fake_service.spreadsheets.return_value.values.return_value.get.side_effect = fake_values_get
+
+    # 只讀路徑(read_all_account_positions / read_all_account_data)改用 batchGet 一次抓回所有
+    # 分頁;valueRanges 順序需與 metadata 的分頁順序一致(個人帳、使用說明)。
+    fake_service.spreadsheets.return_value.values.return_value.batchGet.return_value.execute.return_value = {
+        "valueRanges": [
+            {"values": [HEADER_ROW, _row(action="買", stock="2330", quantity="10", amount="6000")]},
+            {"values": [["說明", "立即同步按鈕"]]},
+        ]
+    }
     return fake_service
 
 
@@ -300,7 +309,40 @@ def test_read_all_account_positions_computes_same_positions_without_writeback(mo
     # 核心保證：沒有任何回寫(values.update 與 batchUpdate 皆 0 次)
     assert fake_service.spreadsheets.return_value.values.return_value.update.call_count == 0
     assert fake_service.spreadsheets.return_value.batchUpdate.call_count == 0
+    # #3：一次 batchGet 讀完所有分頁,不再逐分頁 values.get(N+1 往返)
+    assert fake_service.spreadsheets.return_value.values.return_value.batchGet.call_count == 1
+    assert fake_service.spreadsheets.return_value.values.return_value.get.call_count == 0
     # 分頁清單仍刷新(Firestore 寫入,非 Sheets)
+    update_cache.assert_called_once_with("U123456", ["個人帳"], firestore_client=ANY)
+
+
+def test_read_all_account_data_returns_positions_and_transactions_from_one_batchget(monkeypatch):
+    """合併讀取:一次 batchGet 同時拿到持股損益與流水帳,只讀不寫回——儀表板單一端點用。"""
+    update_cache = MagicMock()
+    monkeypatch.setattr(sheets_client, "update_account_tabs_cache", update_cache)
+    fake_service = _fake_service_with_tabs()
+
+    result, transactions_by_tab = sheets_client.read_all_account_data(
+        _fake_friend(),
+        STOCK_LIST,
+        credentials_builder=lambda enc: MagicMock(),
+        refresher=MagicMock(),
+        sheets_service_builder=lambda credentials: fake_service,
+        firestore_client=MagicMock(),
+    )
+
+    # summary 用的 positions
+    assert [account.tab_name for account in result.accounts] == ["個人帳"]
+    assert result.accounts[0].positions == [
+        Position(stock_code="2330", quantity=Decimal("10"), avg_cost=Decimal("600"))
+    ]
+    # history 用的流水帳(來自同一次讀取)
+    assert list(transactions_by_tab.keys()) == ["個人帳"]
+    assert transactions_by_tab["個人帳"][0].stock_query == "2330"
+    # 只讀:無回寫;且只用一次 batchGet 拿到兩種資料
+    assert fake_service.spreadsheets.return_value.values.return_value.update.call_count == 0
+    assert fake_service.spreadsheets.return_value.batchUpdate.call_count == 0
+    assert fake_service.spreadsheets.return_value.values.return_value.batchGet.call_count == 1
     update_cache.assert_called_once_with("U123456", ["個人帳"], firestore_client=ANY)
 
 

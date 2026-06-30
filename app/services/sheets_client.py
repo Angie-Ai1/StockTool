@@ -661,6 +661,51 @@ def read_tab_positions(
     return positions
 
 
+def _read_all_tab_rows(service, spreadsheet_id: str) -> list[tuple[str, list[list[str]]]]:
+    """一次 batchGet 讀回所有分頁的原始列,回傳 [(分頁名稱, 列)]——只讀,不寫回。
+
+    先用 `spreadsheets().get()` 取分頁標題,再用 `values().batchGet()` 一次抓回所有分頁
+    內容,把原本「metadata 1 趟 + 每分頁各 1 趟」的 N+1 次往返壓成固定 2 次。batchGet 回傳
+    的 `valueRanges` 順序與請求的 `ranges` 相同,可直接與標題 zip 對齊。
+    """
+    spreadsheet = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+    titles = [sheet["properties"]["title"] for sheet in spreadsheet.get("sheets", [])]
+    if not titles:
+        return []
+    batch = (
+        service.spreadsheets()
+        .values()
+        .batchGet(spreadsheetId=spreadsheet_id, ranges=[f"'{title}'" for title in titles])
+        .execute()
+    )
+    value_ranges = batch.get("valueRanges", [])
+    return [
+        (title, value_range.get("values", []))
+        for title, value_range in zip(titles, value_ranges)
+    ]
+
+
+def _parse_tab_transactions(rows: list[list[str]]) -> list[TransactionRow]:
+    """從一個分頁的原始列解析出流水帳——沿用 resync 的分頁辨認與列解析。
+
+    非帳戶分頁(找不到標題列)回空 list;單列格式錯誤(日期/動作)直接略過,不中斷整頁,
+    與 resync 把它們標記為「無法辨識」的效果一致——不計入時間序。
+    """
+    header_row_idx = find_ledger_header_row(rows)
+    if header_row_idx is None:
+        return []
+    header_index = map_header_columns(rows[header_row_idx])
+    transactions: list[TransactionRow] = []
+    for row in rows[header_row_idx + 1:]:
+        if not _cell(row, header_index, "動作"):
+            continue
+        try:
+            transactions.append(_parse_sheet_row(row, header_index))
+        except ValueError:
+            continue  # 格式錯誤的列略過,不中斷整頁
+    return transactions
+
+
 def read_all_account_transactions(
     friend: FriendRecord,
     *,
@@ -673,9 +718,8 @@ def read_all_account_transactions(
 ) -> dict[str, list[TransactionRow]]:
     """讀取所有帳戶分頁的流水帳列(純讀取,不寫回)——供動態圖表時間序重建用。
 
-    回傳 {分頁名稱: 交易列}。沿用 resync 的分頁辨認(`find_ledger_header_row`)與
-    列解析(`_parse_sheet_row`);解析失敗的列(日期/動作格式錯誤)直接略過,與 resync
-    把它們標記為「無法辨識」的效果一致——不計入時間序。
+    回傳 {分頁名稱: 交易列}。一次 batchGet 讀完所有分頁(`_read_all_tab_rows`),解析沿用
+    `_parse_tab_transactions`。
     """
     credentials = credentials_builder(friend.encrypted_refresh_token)
     try:
@@ -686,37 +730,17 @@ def read_all_account_transactions(
 
     service = sheets_service_builder(credentials)
     try:
-        spreadsheet = service.spreadsheets().get(spreadsheetId=friend.spreadsheet_id).execute()
+        tab_rows = _read_all_tab_rows(service, friend.spreadsheet_id)
     except HttpError as exc:
         if exc.resp.status == 404:
             mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
         raise
 
     result: dict[str, list[TransactionRow]] = {}
-    for sheet in spreadsheet.get("sheets", []):
-        title = sheet["properties"]["title"]
-        values_response = (
-            service.spreadsheets()
-            .values()
-            .get(spreadsheetId=friend.spreadsheet_id, range=f"'{title}'")
-            .execute()
-        )
-        rows = values_response.get("values", [])
+    for title, rows in tab_rows:
         if not rows:
             continue
-        header_row_idx = find_ledger_header_row(rows)
-        if header_row_idx is None:
-            continue
-        header_index = map_header_columns(rows[header_row_idx])
-
-        transactions: list[TransactionRow] = []
-        for row in rows[header_row_idx + 1:]:
-            if not _cell(row, header_index, "動作"):
-                continue
-            try:
-                transactions.append(_parse_sheet_row(row, header_index))
-            except ValueError:
-                continue  # 格式錯誤的列略過,不中斷整頁
+        transactions = _parse_tab_transactions(rows)
         if transactions:
             result[title] = transactions
 
@@ -753,7 +777,7 @@ def read_all_account_positions(
 
     service = sheets_service_builder(credentials)
     try:
-        spreadsheet = service.spreadsheets().get(spreadsheetId=friend.spreadsheet_id).execute()
+        tab_rows = _read_all_tab_rows(service, friend.spreadsheet_id)
     except HttpError as exc:
         if exc.resp.status == 404:
             mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
@@ -761,15 +785,7 @@ def read_all_account_positions(
 
     accounts: list[AccountResyncResult] = []
     registered_tabs: list[str] = []
-    for sheet in spreadsheet.get("sheets", []):
-        title = sheet["properties"]["title"]
-        values_response = (
-            service.spreadsheets()
-            .values()
-            .get(spreadsheetId=friend.spreadsheet_id, range=f"'{title}'")
-            .execute()
-        )
-        rows = values_response.get("values", [])
+    for title, rows in tab_rows:
         if not rows:
             continue
         header_row_idx = find_ledger_header_row(rows)
@@ -783,6 +799,63 @@ def read_all_account_positions(
     update_account_tabs_cache(friend.line_user_id, registered_tabs, firestore_client=firestore_client)
 
     return ResyncResult(accounts=accounts)
+
+
+def read_all_account_data(
+    friend: FriendRecord,
+    stock_list: list[StockQuote],
+    *,
+    credentials_builder=build_credentials_from_encrypted_refresh_token,
+    refresher=refresh_or_raise,
+    sheets_service_builder=lambda credentials: build(
+        "sheets", "v4", credentials=credentials, cache_discovery=False
+    ),
+    firestore_client=None,
+) -> tuple[ResyncResult, dict[str, list[TransactionRow]]]:
+    """儀表板單一端點用:一次 OAuth refresh、一次 batchGet 讀完所有分頁,從同一份原始列
+    同時算出持股損益(供 summary)與流水帳(供 history 重建)——只讀,不寫回。
+
+    等同於 `read_all_account_positions` + `read_all_account_transactions` 合併,但省掉重複的
+    refresh、metadata get 與整張表讀取(原本兩支各驗各讀)。OAuth/404 處理與兩者一致。
+    """
+    credentials = credentials_builder(friend.encrypted_refresh_token)
+    try:
+        refresher(credentials)
+    except OAuthInvalidGrantError:
+        mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
+        raise
+
+    service = sheets_service_builder(credentials)
+    try:
+        tab_rows = _read_all_tab_rows(service, friend.spreadsheet_id)
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            mark_needs_reauth(friend.line_user_id, firestore_client=firestore_client)
+        raise
+
+    accounts: list[AccountResyncResult] = []
+    registered_tabs: list[str] = []
+    transactions_by_tab: dict[str, list[TransactionRow]] = {}
+    for title, rows in tab_rows:
+        if not rows:
+            continue
+        header_row_idx = find_ledger_header_row(rows)
+        if header_row_idx is None:
+            continue  # 標題列結構不符,不是帳戶分頁——規格 1.6
+        header_index = map_header_columns(rows[header_row_idx])
+        data_rows = rows[header_row_idx + 1:]
+
+        positions, _ = resync_account_tab(data_rows, header_index, stock_list)
+        registered_tabs.append(title)
+        accounts.append(AccountResyncResult(tab_name=title, positions=list(positions.values())))
+
+        transactions = _parse_tab_transactions(rows)
+        if transactions:
+            transactions_by_tab[title] = transactions
+
+    update_account_tabs_cache(friend.line_user_id, registered_tabs, firestore_client=firestore_client)
+
+    return ResyncResult(accounts=accounts), transactions_by_tab
 
 
 def _txn_to_row_values(txn: TransactionRow, header_index: dict[str, int], num_cols: int) -> list[str]:
