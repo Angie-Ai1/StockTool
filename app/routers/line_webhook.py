@@ -159,7 +159,7 @@ def _liff_dashboard_url() -> str:
 
 def _welcome_image_url() -> str | None:
     base = get_settings().app_base_url.rstrip("/")
-    return f"{base}/static/welcome.png" if base else None
+    return f"{base}/static/welcome.jpg" if base else None
 
 
 def _reply_messages(reply_token: str, messages: list) -> None:
