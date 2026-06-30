@@ -635,6 +635,7 @@ function showState(type) {
 function showError(msg) {
   $('loading').style.display = 'none';
   $('stateTitle').textContent = '載入失敗';
+  $('stateMsg').style.whiteSpace = 'pre-line';  // 保留錯誤訊息中的換行，多行 detail 才看得清楚
   $('stateMsg').textContent = msg || '請稍後再試';
   $('stateBtn').style.display = 'none';
   $('stateCard').classList.add('show');
@@ -669,7 +670,17 @@ async function main() {
       fetchRetry('/liff/summary', { headers }),
       fetchRetry('/liff/history', { headers }),
     ]);
-    if (!sRes.ok || !hRes.ok) throw new Error(`API 錯誤 (summary:${sRes.status} / history:${hRes.status})`);
+    if (!sRes.ok || !hRes.ok) {
+      // 把後端回的 detail(LINE verify 的真正原因，如 IdToken expired / JWS format error)讀出來，
+      // 不要只丟狀態碼，否則無法判斷 401 是「token 過期」還是「token 為 null(scope 漏 openid)」
+      const detailOf = async (res) => {
+        if (res.ok) return 'ok';
+        try { return (await res.json()).detail || `HTTP ${res.status}`; }
+        catch { return `HTTP ${res.status}`; }
+      };
+      const [sDetail, hDetail] = await Promise.all([detailOf(sRes), detailOf(hRes)]);
+      throw new Error(`API 錯誤\nsummary(${sRes.status}): ${sDetail}\nhistory(${hRes.status}): ${hDetail}`);
+    }
 
     summary = await sRes.json();
     const histResp = await hRes.json();
