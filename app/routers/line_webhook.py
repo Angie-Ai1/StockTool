@@ -149,6 +149,13 @@ def _liff_oauth_url() -> str:
     return f"https://liff.line.me/{get_settings().liff_id}"
 
 
+def _liff_dashboard_url() -> str:
+    settings = get_settings()
+    if settings.liff_dashboard_url:
+        return settings.liff_dashboard_url
+    return f"https://liff.line.me/{settings.liff_dashboard_id}"
+
+
 def _reply_text(reply_token: str, text: str) -> None:
     settings = get_settings()
     configuration = Configuration(access_token=settings.line_channel_access_token)
@@ -398,6 +405,7 @@ def _format_query_reply(
         section.append("────────────")
         parts.append("\n".join(section))
 
+    parts.append(f"📊 查看圖表儀表板\n{_liff_dashboard_url()}")
     return "\n".join(parts)
 
 

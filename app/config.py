@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     liff_id: str = ""
     liff_dashboard_id: str = ""
+    liff_dashboard_url: str = ""
 
     port: int = 8000
     tz: str = "Asia/Taipei"
