@@ -643,19 +643,33 @@ function showError(msg) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-// 解出 id_token 的 exp 判斷是否過期。LIFF 的坑:getIDToken() 回的是「登入當下」發的
-// id_token，SDK 只自動續 access token，id_token 不會跟著刷新，放久了就過期
-//（LINE verify 回 IdToken expired → 401）。解不開一律當作無效，強制重登。
-function isIdTokenExpired(idToken) {
+// 解出 id_token 的 exp(秒)。LIFF 的坑:getIDToken() 回的是「登入當下」發的 id_token，
+// SDK 只自動續 access token，id_token 不會跟著刷新，放久了就過期(LINE verify 回
+// IdToken expired → 401)。解不開回 null。
+function idTokenExp(idToken) {
   try {
-    const b64 = idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    let b64 = idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    b64 += '='.repeat((4 - b64.length % 4) % 4);  // 補回 base64url 去掉的 padding，否則 atob 會丟錯
     const json = decodeURIComponent(atob(b64).split('').map(
       c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join(''));
-    const exp = JSON.parse(json).exp;
-    return !exp || exp * 1000 <= Date.now() + 60000;  // 提早 60 秒視為過期，避免邊界誤差
+    return JSON.parse(json).exp || null;
   } catch {
-    return true;
+    return null;
   }
+}
+
+function isIdTokenExpired(idToken) {
+  const exp = idTokenExp(idToken);
+  return !exp || exp * 1000 <= Date.now() + 60000;  // 提早 60 秒視為過期，避免邊界誤差
+}
+
+// 強制換一張新的 id_token:先 logout 清掉 localStorage 裡的舊 session/過期 token，
+// 否則在「已登入」狀態下 liff.login() 只會沿用舊 token，不會重新發。sessionStorage
+// 旗標確保整個流程最多只重登一次，避免換不到時陷入無限重登迴圈。
+function forceRelogin() {
+  sessionStorage.setItem('idTokenRelogin', '1');
+  if (liff.isLoggedIn()) liff.logout();
+  liff.login({ redirectUri: location.href });
 }
 
 async function main() {
@@ -664,16 +678,10 @@ async function main() {
     if (!liff.isLoggedIn()) { liff.login(); return; }
 
     let idToken = liff.getIDToken();
-    // id_token 過期/缺失就強制重新登入換一張新的；sessionStorage 旗標確保只重登一次，
-    // 避免萬一仍換不到新 token 時陷入無限重登迴圈。
-    if (!idToken || isIdTokenExpired(idToken)) {
-      if (!sessionStorage.getItem('idTokenRelogin')) {
-        sessionStorage.setItem('idTokenRelogin', '1');
-        liff.login({ redirectUri: location.href });
-        return;
-      }
-    } else {
-      sessionStorage.removeItem('idTokenRelogin');  // 拿到有效 token 就清掉防呆旗標
+    // 主動偵測:過期/缺失就先換新 token(只試一次)
+    if ((!idToken || isIdTokenExpired(idToken)) && !sessionStorage.getItem('idTokenRelogin')) {
+      forceRelogin();
+      return;
     }
     const headers = { Authorization: 'Bearer ' + idToken };
 
@@ -696,6 +704,12 @@ async function main() {
       fetchRetry('/liff/summary', { headers }),
       fetchRetry('/liff/history', { headers }),
     ]);
+    // 被動保險:萬一主動偵測沒攔到、API 仍回 401(token 被 LINE 判過期/無效)，
+    // 再強制換一次 token（同一旗標確保整個流程總共只重登一次，不會無限迴圈）。
+    if ((sRes.status === 401 || hRes.status === 401) && !sessionStorage.getItem('idTokenRelogin')) {
+      forceRelogin();
+      return;
+    }
     if (!sRes.ok || !hRes.ok) {
       // 把後端回的 detail(LINE verify 的真正原因，如 IdToken expired / JWS format error)讀出來，
       // 不要只丟狀態碼，否則無法判斷 401 是「token 過期」還是「token 為 null(scope 漏 openid)」
@@ -705,9 +719,14 @@ async function main() {
         catch { return `HTTP ${res.status}`; }
       };
       const [sDetail, hDetail] = await Promise.all([detailOf(sRes), detailOf(hRes)]);
-      throw new Error(`API 錯誤\nsummary(${sRes.status}): ${sDetail}\nhistory(${hRes.status}): ${hDetail}`);
+      // 附上 token 的 exp 與現在時間，萬一還是失敗可從畫面直接判斷是「真的過期」還是時鐘/設定問題
+      const exp = idTokenExp(idToken);
+      const fmt = t => t ? new Date(t * 1000).toLocaleString('zh-TW', { hour12: false }) : 'N/A';
+      const diag = `token exp=${fmt(exp)} / now=${new Date().toLocaleString('zh-TW', { hour12: false })}`;
+      throw new Error(`API 錯誤\nsummary(${sRes.status}): ${sDetail}\nhistory(${hRes.status}): ${hDetail}\n${diag}`);
     }
 
+    sessionStorage.removeItem('idTokenRelogin');  // 成功取得資料，清掉重登旗標
     summary = await sRes.json();
     const histResp = await hRes.json();
     hist = histResp.history;
