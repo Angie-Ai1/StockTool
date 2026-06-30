@@ -194,3 +194,16 @@ class HistoryResponse(BaseModel):
     linked: bool
     status: FriendStatus | None = None
     history: PortfolioHistory | None = None
+
+
+class LiffDashboardResponse(BaseModel):
+    """`GET /liff/dashboard-data` 回應 — summary + history 合併。
+
+    儀表板原本分別打 `/liff/summary` 與 `/liff/history`(各驗一次 id_token、各讀整張表
+    一次);合併成單一端點後驗一次、讀一次,故把兩者欄位併在同一個回應。
+    """
+
+    linked: bool
+    status: FriendStatus | None = None
+    accounts: list[AccountSummary] = []
+    history: PortfolioHistory | None = None

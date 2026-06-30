@@ -1,3 +1,4 @@
+from datetime import date as Date
 from decimal import Decimal
 from unittest.mock import MagicMock
 
@@ -7,7 +8,16 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from googleapiclient.errors import HttpError
 
-from app.models.schemas import AccountResyncResult, FriendRecord, FriendStatus, Position, ResyncResult, StockQuote
+from app.models.schemas import (
+    AccountResyncResult,
+    FriendRecord,
+    FriendStatus,
+    Position,
+    ResyncResult,
+    StockQuote,
+    TransactionAction,
+    TransactionRow,
+)
 from app.routers import liff
 from app.services.oauth_service import OAuthInvalidGrantError
 
@@ -206,3 +216,75 @@ def test_sheets_sync_returns_401_on_oauth_invalid_grant(client, monkeypatch):
     response = client.post("/sheets/sync", json={"spreadsheet_id": "sheet-1"})
 
     assert response.status_code == 401
+
+
+# --- GET /liff/dashboard-data（合併端點：驗一次、讀一次，同時回 summary + history）---
+
+
+def test_dashboard_data_returns_summary_and_history_with_single_verify(client, monkeypatch):
+    verify = MagicMock(return_value="U123456")
+    monkeypatch.setattr(liff, "verify_liff_id_token", verify)
+    monkeypatch.setattr(liff, "get_friend_record", MagicMock(return_value=_friend()))
+    stock_list = [StockQuote(code="2330", name="台積電", close=Decimal("700"))]
+    monkeypatch.setattr(liff, "get_cached_stock_list", MagicMock(return_value=stock_list))
+
+    resync_result = ResyncResult(
+        accounts=[
+            AccountResyncResult(
+                tab_name="個人帳",
+                positions=[
+                    Position(stock_code="2330", quantity=Decimal("10"), avg_cost=Decimal("600"))
+                ],
+            )
+        ]
+    )
+    transactions_by_tab = {
+        "個人帳": [
+            TransactionRow(
+                row_uuid="u1",
+                date=Date(2026, 6, 1),
+                action=TransactionAction.BUY,
+                stock_query="2330 台積電",
+                quantity=Decimal("10"),
+                amount=Decimal("6000"),
+            )
+        ]
+    }
+    monkeypatch.setattr(
+        liff,
+        "read_all_account_data",
+        MagicMock(return_value=(resync_result, transactions_by_tab)),
+    )
+
+    response = client.get("/liff/dashboard-data", headers={"Authorization": "Bearer good-token"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["linked"] is True
+    assert body["status"] == "active"
+    # summary 區塊
+    assert body["accounts"][0]["positions"][0]["stock_name"] == "台積電"
+    # history 區塊(同一次回應)
+    assert body["history"] is not None
+    assert body["history"]["accounts"][0]["tab_name"] == "個人帳"
+    # 合併端點的核心效益：整個流程只驗一次 id_token(原本 summary+history 各驗一次)
+    verify.assert_called_once()
+
+
+def test_dashboard_data_falls_back_to_needs_reauth_on_oauth_invalid_grant(client, monkeypatch):
+    monkeypatch.setattr(liff, "verify_liff_id_token", MagicMock(return_value="U123456"))
+    monkeypatch.setattr(liff, "get_friend_record", MagicMock(return_value=_friend()))
+    monkeypatch.setattr(liff, "get_cached_stock_list", MagicMock(return_value=[]))
+    monkeypatch.setattr(
+        liff, "read_all_account_data", MagicMock(side_effect=OAuthInvalidGrantError("boom"))
+    )
+
+    response = client.get("/liff/dashboard-data", headers={"Authorization": "Bearer good-token"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "linked": True,
+        "status": "needs_reauth",
+        "accounts": [],
+        "history": None,
+    }

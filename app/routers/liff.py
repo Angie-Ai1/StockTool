@@ -21,6 +21,7 @@ from app.models.schemas import (
     AccountSummary,
     FriendStatus,
     HistoryResponse,
+    LiffDashboardResponse,
     LiffSummaryResponse,
     Position,
     PositionSummary,
@@ -33,6 +34,7 @@ from app.services.fuzzy_match import resolve_stock
 from app.services.oauth_service import OAuthInvalidGrantError
 from app.services.pnl_engine import compute_unrealized_pnl
 from app.services.sheets_client import (
+    read_all_account_data,
     read_all_account_positions,
     read_all_account_transactions,
     resync,
@@ -218,3 +220,45 @@ def liff_history(authorization: str = Header(...)) -> HistoryResponse:
 
     history = reconstruct_history(transactions, _stock_resolver(stock_list))
     return HistoryResponse(linked=True, status=friend.status, history=history)
+
+
+@router.get("/liff/dashboard-data")
+def liff_dashboard_data(authorization: str = Header(...)) -> LiffDashboardResponse:
+    """儀表板單一資料端點:驗一次 id_token、讀一次試算表,同時回 summary + history。
+
+    取代前端分別打 `/liff/summary` 與 `/liff/history`(各驗各讀整張表)的雙重往返——
+    身分驗證、stock_list、accounts/history 的組裝邏輯與那兩支一致,只是共用同一次讀取。
+    """
+    id_token = _extract_bearer_token(authorization)
+    try:
+        line_user_id = verify_liff_id_token(id_token)
+    except InvalidLiffIdTokenError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    friend = get_friend_record(line_user_id)
+    if friend is None:
+        return LiffDashboardResponse(linked=False)
+    if friend.status == FriendStatus.NEEDS_REAUTH:
+        return LiffDashboardResponse(linked=True, status=FriendStatus.NEEDS_REAUTH)
+
+    stock_list = get_cached_stock_list()
+    try:
+        result, transactions_by_tab = read_all_account_data(friend, stock_list)
+    except (OAuthInvalidGrantError, HttpError):
+        return LiffDashboardResponse(linked=True, status=FriendStatus.NEEDS_REAUTH)
+
+    stock_by_code = {stock.code: stock for stock in stock_list}
+    accounts = [
+        AccountSummary(
+            tab_name=account.tab_name,
+            positions=[
+                _to_position_summary(position, stock_by_code.get(position.stock_code))
+                for position in account.positions
+            ],
+        )
+        for account in result.accounts
+    ]
+    history = reconstruct_history(transactions_by_tab, _stock_resolver(stock_list))
+    return LiffDashboardResponse(
+        linked=True, status=friend.status, accounts=accounts, history=history
+    )

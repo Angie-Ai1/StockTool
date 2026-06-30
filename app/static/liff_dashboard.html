@@ -685,7 +685,7 @@ async function main() {
     }
     const headers = { Authorization: 'Bearer ' + idToken };
 
-    // Cloud Run min-instances=0 冷啟動時，重的 resync(/liff/summary) 可能持續回 503，
+    // Cloud Run min-instances=0 冷啟動時，/liff/dashboard-data 可能持續回 503，
     // 需要較長、較多次的重試撐過容器暖機（單次最多約 2+3+4+4+4+4 ≈ 21s）
     const fetchRetry = async (url, opts, tries = 6) => {
       for (let i = 0; i < tries; i++) {
@@ -700,36 +700,30 @@ async function main() {
       }
     };
 
-    const [sRes, hRes] = await Promise.all([
-      fetchRetry('/liff/summary', { headers }),
-      fetchRetry('/liff/history', { headers }),
-    ]);
+    // 單一端點:後端驗一次 id_token、讀一次試算表,同時回 summary + history（合併端點）
+    const res = await fetchRetry('/liff/dashboard-data', { headers });
     // 被動保險:萬一主動偵測沒攔到、API 仍回 401(token 被 LINE 判過期/無效)，
     // 再強制換一次 token（同一旗標確保整個流程總共只重登一次，不會無限迴圈）。
-    if ((sRes.status === 401 || hRes.status === 401) && !sessionStorage.getItem('idTokenRelogin')) {
+    if (res.status === 401 && !sessionStorage.getItem('idTokenRelogin')) {
       forceRelogin();
       return;
     }
-    if (!sRes.ok || !hRes.ok) {
+    if (!res.ok) {
       // 把後端回的 detail(LINE verify 的真正原因，如 IdToken expired / JWS format error)讀出來，
       // 不要只丟狀態碼，否則無法判斷 401 是「token 過期」還是「token 為 null(scope 漏 openid)」
-      const detailOf = async (res) => {
-        if (res.ok) return 'ok';
-        try { return (await res.json()).detail || `HTTP ${res.status}`; }
-        catch { return `HTTP ${res.status}`; }
-      };
-      const [sDetail, hDetail] = await Promise.all([detailOf(sRes), detailOf(hRes)]);
+      let detail;
+      try { detail = (await res.json()).detail || `HTTP ${res.status}`; }
+      catch { detail = `HTTP ${res.status}`; }
       // 附上 token 的 exp 與現在時間，萬一還是失敗可從畫面直接判斷是「真的過期」還是時鐘/設定問題
       const exp = idTokenExp(idToken);
       const fmt = t => t ? new Date(t * 1000).toLocaleString('zh-TW', { hour12: false }) : 'N/A';
       const diag = `token exp=${fmt(exp)} / now=${new Date().toLocaleString('zh-TW', { hour12: false })}`;
-      throw new Error(`API 錯誤\nsummary(${sRes.status}): ${sDetail}\nhistory(${hRes.status}): ${hDetail}\n${diag}`);
+      throw new Error(`API 錯誤\ndashboard(${res.status}): ${detail}\n${diag}`);
     }
 
     sessionStorage.removeItem('idTokenRelogin');  // 成功取得資料，清掉重登旗標
-    summary = await sRes.json();
-    const histResp = await hRes.json();
-    hist = histResp.history;
+    summary = await res.json();  // { linked, status, accounts, history }
+    hist = summary.history;
 
     if (!summary.linked) return showState('unlinked');
     if (summary.status === 'needs_reauth') return showState('reauth');
