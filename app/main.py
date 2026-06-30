@@ -1,8 +1,10 @@
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.routers import line_webhook, liff, oauth_callback, tick
 
 app = FastAPI(title="Stocktool")
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 @app.get("/health")  # not /healthz — Cloud Run's *.run.app domain reserves that path and never forwards it to the container

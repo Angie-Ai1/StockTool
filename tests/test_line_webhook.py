@@ -160,7 +160,8 @@ def test_follow_event_new_friend_does_not_reactivate(client, monkeypatch):
     reactivate = MagicMock()
     monkeypatch.setattr(line_webhook, "reactivate_friend", reactivate)
     monkeypatch.setattr(line_webhook, "_liff_oauth_url", MagicMock(return_value="https://oauth.example.com"))
-    monkeypatch.setattr(line_webhook, "_reply_text", MagicMock())
+    monkeypatch.setattr(line_webhook, "_welcome_image_url", MagicMock(return_value=None))
+    monkeypatch.setattr(line_webhook, "_reply_messages", MagicMock())
 
     _post(client, [_follow_event("Uxxx")])
 
@@ -170,15 +171,18 @@ def test_follow_event_new_friend_does_not_reactivate(client, monkeypatch):
 def test_follow_event_new_friend_replies_with_welcome_and_oauth_url(client, monkeypatch):
     monkeypatch.setattr(line_webhook, "get_friend_record", MagicMock(return_value=None))
     monkeypatch.setattr(line_webhook, "_liff_oauth_url", MagicMock(return_value="https://oauth.example.com"))
+    monkeypatch.setattr(line_webhook, "_welcome_image_url", MagicMock(return_value=None))
     reply = MagicMock()
-    monkeypatch.setattr(line_webhook, "_reply_text", reply)
+    monkeypatch.setattr(line_webhook, "_reply_messages", reply)
 
     _post(client, [_follow_event("Uxxx")])
 
     reply.assert_called_once()
-    text = reply.call_args[0][1]
-    assert "https://oauth.example.com" in text
-    assert "免責聲明" in text or "非正式" in text
+    # messages 是 list，TextMessage 的 text 在最後一個
+    messages = reply.call_args[0][1]
+    text_msg = next(m for m in messages if hasattr(m, "text"))
+    assert "https://oauth.example.com" in text_msg.text
+    assert "非正式" in text_msg.text
 
 
 def test_follow_event_returning_friend_replies_welcome_back(client, monkeypatch):

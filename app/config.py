@@ -24,6 +24,7 @@ class Settings(BaseSettings):
 
     tick_shared_secret: str = ""
 
+    app_base_url: str = ""
     liff_id: str = ""
     liff_dashboard_id: str = ""
     liff_dashboard_url: str = ""

@@ -24,6 +24,7 @@ from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
     ApiClient,
     Configuration,
+    ImageMessage,
     MessageAction as LineMessageAction,
     MessagingApi,
     QuickReply,
@@ -154,6 +155,20 @@ def _liff_dashboard_url() -> str:
     if settings.liff_dashboard_url:
         return settings.liff_dashboard_url
     return f"https://liff.line.me/{settings.liff_dashboard_id}"
+
+
+def _welcome_image_url() -> str | None:
+    base = get_settings().app_base_url.rstrip("/")
+    return f"{base}/static/welcome.png" if base else None
+
+
+def _reply_messages(reply_token: str, messages: list) -> None:
+    settings = get_settings()
+    configuration = Configuration(access_token=settings.line_channel_access_token)
+    with ApiClient(configuration) as api_client:
+        MessagingApi(api_client).reply_message(
+            ReplyMessageRequest(reply_token=reply_token, messages=messages)
+        )
 
 
 def _reply_text(reply_token: str, text: str) -> None:
@@ -550,7 +565,12 @@ def _handle_follow_event(event: FollowEvent) -> None:
     line_user_id = event.source.user_id
     friend = get_friend_record(line_user_id)
     if friend is None:
-        _reply_text(event.reply_token, _build_welcome_new_text(_liff_oauth_url()))
+        img_url = _welcome_image_url()
+        messages = []
+        if img_url:
+            messages.append(ImageMessage(original_content_url=img_url, preview_image_url=img_url))
+        messages.append(TextMessage(text=_build_welcome_new_text(_liff_oauth_url())))
+        _reply_messages(event.reply_token, messages)
     elif friend.status == FriendStatus.INACTIVE:
         reactivate_friend(line_user_id)
         _reply_text(event.reply_token, _build_welcome_back_text())
