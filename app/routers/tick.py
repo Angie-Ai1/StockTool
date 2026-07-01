@@ -137,11 +137,21 @@ def run_daily_close_task(
 
     _mark_today_executed(today, firestore_client=client)
 
+# 這裡是用背景任務 (收到請求 ➔ 立刻回傳 200 ➔ 瀏覽器/排程器結束連線 ➔ 伺服器在後台默默爬蟲)
+# 但實務上,Cloud Scheduler 會在 14:30~15:00 之間就把收盤資料發布完畢,所以不需要背景任務,直接同步執行即可
+# @router.api_route("/tick", methods=["GET", "POST"])
+# def tick(background_tasks: BackgroundTasks, x_tick_secret: str | None = Header(default=None)) -> dict[str, str]:
+#     settings = get_settings()
+#     if not settings.tick_shared_secret or x_tick_secret != settings.tick_shared_secret:
+#         raise HTTPException(status_code=401, detail="Unauthorized")
+#     background_tasks.add_task(run_daily_close_task)
+#     return {"status": "ok"}
 
 @router.api_route("/tick", methods=["GET", "POST"])
-def tick(background_tasks: BackgroundTasks, x_tick_secret: str | None = Header(default=None)) -> dict[str, str]:
+def tick(x_tick_secret: str | None = Header(default=None)) -> dict[str, str]:
     settings = get_settings()
     if not settings.tick_shared_secret or x_tick_secret != settings.tick_shared_secret:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    background_tasks.add_task(run_daily_close_task)
+    # 改為直接同步執行，不走背景
+    run_daily_close_task()
     return {"status": "ok"}
