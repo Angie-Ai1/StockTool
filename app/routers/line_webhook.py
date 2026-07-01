@@ -395,6 +395,7 @@ def _format_query_reply(
 
         total_realized = Decimal("0")
         total_market_value = Decimal("0")
+        total_cost_basis = Decimal("0")
         has_price = False
 
         if not active:
@@ -413,8 +414,10 @@ def _format_query_reply(
                 else:
                     section.append(f"均價 ${pos.avg_cost:.2f} | 無即時報價")
                 total_realized += pos.realized_pnl
+                total_cost_basis += pos.quantity * pos.avg_cost
         section.append("────────────")
         sign = "+" if total_realized >= 0 else ""
+        section.append(f"投入本金 ${total_cost_basis:,.0f}")
         section.append(f"已實現損益 {sign}{total_realized:,.0f}")
         if has_price:
             section.append(f"持股市值 ${total_market_value:,.0f}")
