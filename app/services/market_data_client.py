@@ -10,7 +10,8 @@ import httpx
 
 from app.models.schemas import StockQuote
 
-TWSE_STOCK_DAY_ALL_URL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+# 上市改用官網即時 JSON，上櫃維持極速穩定的 OpenAPI
+TWSE_MI_INDEX_URL = "https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&type=ALLBUT0999"
 TPEX_MAINBOARD_DAILY_CLOSE_QUOTES_URL = (
     "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
 )
@@ -26,15 +27,41 @@ def _to_decimal(value: str | None) -> Decimal | None:
 
 
 def fetch_twse_listing(client: httpx.Client) -> list[StockQuote]:
-    response = client.get(TWSE_STOCK_DAY_ALL_URL)
+    """改爬官網 MI_INDEX JSON API，收盤後即時更新 (14:30 前後即可拿到當日最新)"""
+    response = client.get(TWSE_MI_INDEX_URL)
     response.raise_for_status()
-    return [
-        StockQuote(code=row["Code"], name=row["Name"], close=_to_decimal(row.get("ClosingPrice")))
-        for row in response.json()
-    ]
+    data = response.json()
+    
+    # 尋找含有個股收盤行情的 table (通常是 Table 8)
+    stock_table = None
+    for table in data.get("tables", []):
+        title = table.get("title", "")
+        if "每日收盤行情" in title:
+            stock_table = table
+            break
+            
+    if not stock_table:
+        # 如果結構變更或查無資料，退回空清單以容錯
+        return []
+        
+    quotes = []
+    # 欄位順序：0=證券代號, 1=證券名稱, 8=收盤價
+    for row in stock_table.get("data", []):
+        code = row[0].strip()
+        name = row[1].strip()
+        close_val = row[8].strip()
+        quotes.append(
+            StockQuote(
+                code=code,
+                name=name,
+                close=_to_decimal(close_val)
+            )
+        )
+    return quotes
 
 
 def fetch_tpex_listing(client: httpx.Client) -> list[StockQuote]:
+    """維持原樣：上櫃 OpenAPI 更新迅速且穩定"""
     response = client.get(TPEX_MAINBOARD_DAILY_CLOSE_QUOTES_URL)
     response.raise_for_status()
     return [

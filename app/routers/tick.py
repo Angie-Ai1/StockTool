@@ -27,7 +27,7 @@ from app.services.oauth_service import OAuthInvalidGrantError
 from app.services.sheets_client import resync
 
 router = APIRouter()
-CLOSE_TASK_HOUR = 15
+CLOSE_TASK_HOUR = 14
 CLOSE_TASK_MINUTE = 30
 
 # 留間隔避免逐位親友 resync 一次性發出全部請求,撞到 Sheets API per-project 共用配額
@@ -35,8 +35,7 @@ CLOSE_TASK_MINUTE = 30
 FRIEND_RESYNC_INTERVAL_SECONDS = 2
 
 # 
-# TWSE 收盤資料約在14:30~15:00之間才會發布完畢，但 tick 設定在 14:30 就執行，會搶先一步把「舊資料」(前一天)當成今日資料存入
-# 所以將收盤任務設為15:30 ，抓回的收盤價/代碼清單
+# 上市股票的爬蟲改為「官網即時 JSON」，將收盤任務設為14:30 ，抓回收盤價/代碼清單
 # 記憶體快取;重啟或 15:30 前為空時,從 Firestore system/stock_list 回載。
 _cached_stock_list: list[StockQuote] = []
 
